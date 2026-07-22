@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Drama Desk"
+  short_description: "把分镜稿投进本地 AI 再现制片工作台出片，并管理画风、LoRA 训练与 ComfyUI 诊断"
+  default_prompt: "Use $gitruck-ai-drama-desk to drive the local AI drama production desk: import a storyboard, generate keyframes/videos, export the return package, and manage styles or LoRA jobs safely."

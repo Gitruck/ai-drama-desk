@@ -1,0 +1,16 @@
+{
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "qwen_image_edit_2511_fp8_e4m3fn_scaled_lightning_comfyui_4steps_v1.0.safetensors", "weight_dtype": "default" } },
+  "2": { "class_type": "CLIPLoader", "inputs": { "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default" } },
+  "3": { "class_type": "VAELoader", "inputs": { "vae_name": "qwen_image_vae.safetensors" } },
+  "10": { "class_type": "EmptyImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1, "color": 0 } },
+  "11": { "class_type": "EmptyImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1, "color": 0 } },
+  "12": { "class_type": "EmptyImage", "inputs": { "width": 1024, "height": 1024, "batch_size": 1, "color": 0 } },
+  "6": { "class_type": "TextEncodeQwenImageEditPlus", "inputs": { "clip": ["2", 0], "prompt": "", "vae": ["3", 0], "image1": ["10", 0], "image2": ["11", 0], "image3": ["12", 0] } },
+  "7": { "class_type": "TextEncodeQwenImageEditPlus", "inputs": { "clip": ["2", 0], "prompt": "", "vae": ["3", 0], "image1": ["10", 0], "image2": ["11", 0], "image3": ["12", 0] } },
+  "18": { "class_type": "LoraLoaderModelOnly", "inputs": { "model": ["1", 0], "lora_name": "example-style-lora.safetensors", "strength_model": 0.8 } },
+  "13": { "class_type": "ModelSamplingAuraFlow", "inputs": { "model": ["18", 0], "shift": 3.1 } },
+  "14": { "class_type": "EmptySD3LatentImage", "inputs": { "width": 1280, "height": 720, "batch_size": 1 } },
+  "15": { "class_type": "KSampler", "inputs": { "model": ["13", 0], "seed": 0, "steps": 4, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["14", 0], "denoise": 1.0 } },
+  "16": { "class_type": "VAEDecode", "inputs": { "samples": ["15", 0], "vae": ["3", 0] } },
+  "17": { "class_type": "SaveImage", "inputs": { "images": ["16", 0], "filename_prefix": "aidrama/kf-lora" } }
+}

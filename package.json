@@ -1,0 +1,34 @@
+{
+  "name": "gitruck-ai-drama-desk",
+  "version": "0.2.0-beta.1",
+  "description": "AI 再现（AI Drama）出片工作台：分镜稿导入 → 关键帧/视频生成（本地 ComfyUI 或云端出口）→ 画风资产与风格 LoRA 管理 → 片段导出",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gitruck/ai-drama-desk.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server/index.ts",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "bun run build && bun run server/index.ts",
+    "test": "bun test",
+    "cli": "bun run cli/index.ts",
+    "build:cli": "bun build cli/index.ts --target=bun --outfile=dist/gitruck-ai-drama-desk.js",
+    "build:cli:exe": "bun build --compile cli/index.ts --outfile=dist/gitruck-ai-drama-desk-beta.exe",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0"
+  }
+}

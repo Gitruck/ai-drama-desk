@@ -1,0 +1,233 @@
+# ai-drama-desk · AI 再现制片工作台
+
+> 把「分镜稿 md」低成本变成可回轨的视频片段 —— **本地开源模型出片产线：keyframe（参考图/LoRA 锁角色与画风）→ I2V 抽卡 → 导出 return-v1 命名的片段包，可拖回任意 NLE**。
+>
+> 本地 GPU 做重活、云端出口做备选、mock 引擎零模型演练全链路。数据即文件，删目录即删数据。
+
+**🔗 配套教程：[AI 视频制片全流程与 LoRA 实践](https://hocassian.feishu.cn/docx/BVond4JbnoWVLnxaWMSckBpnnig)**（完整制片流程 · Agent 中使用 skills · LoRA 实战复盘 · 与 gtrk 工作流衔接）
+
+```
+分镜稿 md ──解析──▶ Shot IR ──每镜──▶ keyframe（参考图锁角色/画风）──▶ I2V 出片（540p 抽卡）
+                                                                        │
+        任意 NLE ◀── 手动拖回对齐 ◀── 导出回轨包（return-v1 命名 + ffprobe 实测时长）
+```
+
+---
+
+## 为什么用 ai-drama-desk
+
+- **分镜稿进、片段包出**：粘贴一份分镜稿 md → 结构化成分镜卡片 → 逐镜出图、出片、抽卡挑选 → 一键导出带 manifest 的回轨包，文件名即回轨定位（`<slug>-<beatId>-s<n>.mp4`）。
+- **本地开源模型的低成本产线**：Qwen-Image-Edit 出 keyframe 锁角色一致性，Wan2.2 / HunyuanVideo 1.5 蒸馏档 I2V 出片——24G 级显卡（如 4090）单机可跑；不想等本地 GPU 时切云端出口（fal / 火山方舟）。
+- **画风是资产，不是设定项**：画风档案（Style Lock + 负面栈 + 锚定参考图 + 可选 LoRA）独立建档、可导入导出风格包、可绑定你自己训练的 LoRA；换栏目 = 换画风档案，管线不变。
+- **零门槛试跑**：mock 引擎无 GPU、无模型、无云 Key（仅需本地 ffmpeg）即可端到端演练「导入 → 出图 → 出片 → 导出」，先跑通流程再逐步接真引擎。
+- **为 agent 而生**：Web UI 与 CLI 都是同一 HTTP API 的客户端；配套 skill 装进 Claude Code / Codex / Cursor 等 Agent 后，一句「把这份分镜稿投进工作台出片」即可驱动闭环。playbook 见 [`AGENT.md`](./AGENT.md)。
+
+## 功能
+
+| | 能力 | 做什么 |
+|---|---|---|
+| 📥 | 分镜稿导入 | 粘贴分镜稿 md → 解析成分镜卡片（beat id / 每镜秒数 / 场景 / 角色 / 描述全结构化），解析告警逐条提示，也可直接投喂 `shots.json` |
+| 🎭 | 角色参考图 | 每角色上传设定原图；本地引擎走「单人单图集」（裁剪画布拖框裁主参考），多图引擎走「多图直喂集」（勾选墙 + 预算分配） |
+| 🖼️ | Keyframe 出图 | 每镜出首帧，单卡重 roll、点击选用；引擎可选本地 ComfyUI（参考图档 / LoRA 档）、云端、mock |
+| 🎞️ | I2V 出片 | 选中 keyframe → 图生视频；本地 ComfyUI 540p 抽卡档 / 480p 蒸馏档，或云端出口 |
+| 🤖 | 全自动补齐 | 缺啥补啥：无图先出图再接力出片；本地 GPU 车道串行、云车道小并发 |
+| 📦 | 导出回轨包 | `<slug>-<beatId>-s<n>.mp4` + manifest（ffprobe 实测时长 vs 建议秒数差值、成本台账），拖回任意 NLE 对齐 |
+| 🎨 | 画风资产 | 画风档案建/改/删、风格包导入导出、LoRA 绑定；CLI `style` 子命令同能力 |
+| 🧪 | LoRA 训练 | 提交前检查 → 后台训练 → checkpoint 恢复 → 发布绑定到画风；CLI `lora` 子命令同能力 |
+| 🩺 | ComfyUI 诊断 | service / runtime / workflow / nodes / models 五层只读诊断，缺什么、放哪里逐条点名 |
+
+---
+
+## 安装 & 快速上手
+
+### a) 工作台本体（第一步：mock 零依赖跑通全链路）
+
+需要 [Bun](https://bun.sh) ≥ 1.x；mock 演练与导出实测需本地可用的 `ffmpeg`（在 PATH 中）。
+
+```bash
+git clone https://github.com/Gitruck/ai-drama-desk.git
+cd ai-drama-desk
+bun install
+bun run start        # 构建前端 + 起服务，打开 http://127.0.0.1:7799
+```
+
+**新手第一步不需要 GPU、模型或任何云 Key**：新建项目 → 粘贴一份分镜稿 md（最小结构见下文「输入契约」）→ 出图/出片引擎都选 **mock** → 全自动补齐 → 导出。跑通这一圈，你就理解了整个工作台；之后再按需接 ComfyUI（本地出片）或云端出口。
+
+CLI 与服务同源（源码形态运行）：
+
+```bash
+bun run cli -- --help
+bun run cli -- health --json
+```
+
+### b) ComfyUI 本地部署（本地出图/出片）
+
+本地引擎经 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 的 HTTP API 驱动（默认 `http://127.0.0.1:8188`）。从官方仓库或官方 Desktop/便携包获取并安装；源码方式概略：
+
+```bash
+git clone https://github.com/comfyanonymous/ComfyUI.git
+cd ComfyUI
+python -m venv venv           # 建议独立 venv（或用官方推荐的安装方式）
+# 激活 venv 后按官方 README 安装依赖（含对应 CUDA 的 PyTorch）
+python main.py                # 默认监听 127.0.0.1:8188
+```
+
+工作台「设置」页的 ComfyUI 诊断会分层报告缺什么（插件节点 / 模型文件），按提示补齐即可。ComfyUI 未装或未启动时状态栏显示离线，不影响 mock / 云端出口。
+
+> **许可边界**：ComfyUI 为 GPL-3.0 项目。本仓不包含、不派生其任何代码，仅通过 HTTP API 与本机运行的 ComfyUI 实例通信。
+
+### c) 模型下载清单（自行从原始发布方获取）
+
+> **本仓不分发任何模型权重。** 下表列出内置 workflow 模板实际引用的权重文件；请自行从**原始发布方**（模型官方仓库 / 官方 Hugging Face 组织）下载，并**自行核对各自的许可条款**——社区蒸馏版、加速版（lightning / distilled）尤其要确认再分发与商用条款。fp8 全家桶按 24G 级显存（如 RTX 4090）选型。
+>
+> **HunyuanVideo 1.5 地域提示**：混元系列权重受腾讯社区许可（Tencent Community License）约束，许可条款对部分地域（如欧盟、英国、韩国）有排除性规定，下载使用前请自行确认适用性。
+
+放入 ComfyUI 安装目录的 `models/` 对应子目录，文件名以模板引用为准（下载后如文件名不同，重命名或改模板均可）：
+
+**Keyframe 出图 · Qwen-Image-Edit-2511（`qwen-edit-keyframe.json` / `qwen-edit-keyframe-lora.json`）**
+
+| 权重文件 | 落位子目录 | 说明 |
+|---|---|---|
+| `qwen_image_edit_2511_fp8_e4m3fn_scaled_lightning_comfyui_4steps_v1.0.safetensors` | `models/diffusion_models` | Qwen-Image-Edit-2511 fp8 · 4 步 lightning 加速版 |
+| `qwen_2.5_vl_7b_fp8_scaled.safetensors` | `models/text_encoders` | Qwen2.5-VL 7B 文本编码器 fp8 |
+| `qwen_image_vae.safetensors` | `models/vae` | Qwen-Image VAE |
+| 你自己的画风 LoRA（B 档可选） | `models/loras` | 模板中的 LoRA 文件名仅为示例占位；用 LoRA 训练页发布绑定，或在画风档案 manifest 里填相对路径 |
+
+**I2V 出片 · Wan2.2 540p 抽卡档（`wan22-i2v-540p.json`）**
+
+| 权重文件 | 落位子目录 | 说明 |
+|---|---|---|
+| `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` | `models/diffusion_models` | Wan2.2 I2V A14B 高噪模型 fp8 |
+| `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` | `models/diffusion_models` | Wan2.2 I2V A14B 低噪模型 fp8 |
+| `wan2.2_i2v_lightning_high_noise.safetensors` | `models/loras` | Wan2.2-Lightning 4 步蒸馏 LoRA（高噪，社区加速版、许可自查） |
+| `wan2.2_i2v_lightning_low_noise.safetensors` | `models/loras` | Wan2.2-Lightning 4 步蒸馏 LoRA（低噪，社区加速版、许可自查） |
+| `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | `models/text_encoders` | UMT5-XXL 文本编码器 fp8 |
+| `wan_2.1_vae.safetensors` | `models/vae` | Wan 2.1 VAE（2.2 沿用） |
+
+**I2V 出片 · HunyuanVideo 1.5 480p 蒸馏档（`hunyuan15-i2v-480p.json`）**
+
+| 权重文件 | 落位子目录 | 说明 |
+|---|---|---|
+| `hunyuanvideo1.5_480p_i2v_step_distilled_fp8_scaled.safetensors` | `models/diffusion_models` | HunyuanVideo 1.5 480p I2V 步数蒸馏 fp8（腾讯社区许可，地域提示见上） |
+| `qwen_2.5_vl_7b_fp8_scaled.safetensors` | `models/text_encoders` | 与 Qwen-Edit 共用同一文件 |
+| `byt5_small_glyphxl_fp16.safetensors` | `models/text_encoders` | ByT5-small glyph 编码器 |
+| `hunyuanvideo15_vae_fp16.safetensors` | `models/vae` | HunyuanVideo 1.5 VAE |
+| `sigclip_vision_patch14_384.safetensors` | `models/clip_vision` | SigCLIP vision 编码器 |
+
+### d) workflow 模板与节点映射（templates/）
+
+工作台不猜你的 ComfyUI 装了什么节点：**你在 ComfyUI 里把 workflow 调通 →「工作流 → 导出(API)」存成 JSON 放进 `templates/` → 在工作台「设置」登记模板文件名和节点映射（nodeMap）**。仓内自带上述三套模板开箱可用；自定义模板、nodeMap 字段说明与占位图注意事项见 [templates/README.md](templates/README.md)。
+
+### e) 云端出口（可选）
+
+不想等本地 GPU、或某镜动作复杂本地抽不出来时，可切云端引擎。Key 填在 `data/config.json`（字段模板见仓根 [config.example.json](config.example.json)，首次启动会自动生成默认配置）：
+
+| 出口 | 配置字段 | 说明 |
+|---|---|---|
+| fal.ai（I2V 出片） | `falKey` | 默认端点 Wan2.2 A14B I2V；每次生成计入成本台账 |
+| 火山方舟 Seedream（keyframe 出图） | `arkApiKey` | 多图直喂参考集（预算 10 张），适合直接吃三视图原图 |
+
+密钥只存本地 `data/config.json`（该目录不进 Git）；API 对外只返回「已配置」布尔值，不回显密钥。
+
+---
+
+## 输入契约：分镜稿 md
+
+上游输入是一份**分镜稿 Markdown**——不预设由谁产出：手写、任何 LLM、或 gtrk 生态的 `/gtrk-ai-drama` skill（[@gitruck/cli](https://www.npmjs.com/package/@gitruck/cli)）产的分镜稿都可直接投喂。解析器容错优先，解析不出的字段可在 UI 手工补齐，也可直接投喂 `shots.json` 跳过解析。最小结构骨架（虚构题材示例）：
+
+```markdown
+# 灯塔与机械信鸽（beat B02）
+
+- 区间总时长：track_st 12.000 → track_ed 48.500 ≈ 36.5 秒
+- 建议分镜数：2
+
+## 一、中文稿（喂图生视频）
+
+### ① 视觉基调（Style Lock）
+> 手绘插画风，低饱和暖灰底色，黄铜与雾蓝点缀……（你的画风锁定词）
+> 禁忌：写实照片感、文字水印
+
+### ② 故事背景
+十九世纪末的孤岛灯塔，老守塔人与一只机械信鸽相依为命。
+
+### ③ 角色
+#### 守塔人（约六十岁，白胡须，油布雨衣）
+身形佝偻但眼神明亮，常年握灯柄的右手指节粗大。
+
+### ④ 分镜
+#### 分镜 01 · 灯塔远景 ｜建议 ≈6s ｜场景：暴风雨夜的海岸 ｜角色：无 ｜对应原文：那年冬天…
+〔冷雾蓝基调〕暴风雨中的灯塔剪影，光束缓慢扫过翻涌的海面。
+
+#### 分镜 02 · 守塔人上楼 ｜建议 ≈5s ｜场景：灯塔旋梯 ｜角色：守塔人
+守塔人提灯拾级而上，影子在弧形墙面拉长。
+
+### ⑤ 原文文稿
+那年冬天，灯塔的光第一次为一只鸽子亮起……
+
+## 二、English Storyboard
+
+### ① Style Lock
+> Hand-drawn illustration, desaturated warm grey palette...
+
+### ④ Shots
+#### Shot 01 · Lighthouse wide ｜≈6s
+[Cold misty blue tone] Silhouette of the lighthouse in a storm...
+```
+
+要点：标题带 `（beat BXX）` 供导出命名；①–⑤ 区块骨架（① 视觉基调 / ② 故事背景 / ③ 角色 / ④ 分镜 / ⑤ 原文文稿）；每镜一行分镜头（`｜` 分隔建议秒数 / 段 / 场景 / 角色 / 对应原文），描述行首可带 `〔视觉基调前缀〕`；英文块可选、按 Shot 序号回填。
+
+## 工作流
+
+1. **导入**：粘贴分镜稿 md → 解析成分镜卡片，解析告警逐条提示。
+2. **角色参考图**：每角色上传设定原图（只传一次，各参考集共享）。本地 ComfyUI A/B 档走**单人单图集**——裁剪画布上拖框裁出只含该角色的主参考；Seedream 走**多图直喂集**——默认全选、可点选排除。详见[使用手册](docs/使用手册.md)。
+3. **出图**：每镜 keyframe，单卡重 roll、点击选用。
+4. **出片**：选中 keyframe → I2V。出口：本地 ComfyUI（540p 抽卡档 / 480p 蒸馏档）/ fal 云 / mock。
+5. **全自动补齐**：缺啥补啥（无图先出图再接力出片），本地 GPU 车道串行、云车道小并发。
+6. **导出回轨**：`<slug>-<beatId>-s<n>.mp4` 落 `exports/aidrama/`，manifest 含 ffprobe 实测时长 vs 建议秒数差值 + 成本台账。把满意的片段**拖回你的任意 NLE**（剪映 / Premiere / 达芬奇…）按 beat 区间对齐。
+
+## 生成引擎
+
+| 引擎 | 类型 | 依赖 | 说明 |
+|---|---|---|---|
+| `mock-image` / `mock-video` | 出图 / 出片 | 本地 ffmpeg | 占位图 / 缓推占位片，零模型零 Key 演练全链路 |
+| `comfyui-image`（A 档） | 出图 | 本地 ComfyUI | Qwen-Image-Edit-2511，角色参考图锁一致性 |
+| `comfyui-image2`（B 档） | 出图 | 本地 ComfyUI + 画风 LoRA | 画风由 LoRA 承担，需当前画风绑定 LoRA manifest |
+| `seedream-image` | 出图 | `arkApiKey` | 火山方舟 Seedream，多图直喂（预算 10 张） |
+| `comfyui-video` | 出片 | 本地 ComfyUI | Wan2.2 I2V 540p 抽卡档 |
+| `hunyuan-video` | 出片 | 本地 ComfyUI | HunyuanVideo 1.5 480p 步数蒸馏档 |
+| `fal-video` | 出片 | `falKey` | fal.ai Wan2.2 A14B I2V，高动作镜头或赶工 |
+
+## 画风资产
+
+画风档案 = Style Lock 文字锁 + 负面栈 + 锚定参考图 + 可选 LoRA 绑定。**从风格包导入，或自建画风**：
+
+```bash
+bun run cli -- style create --file ./profile.json          # 自建
+bun run cli -- style import ./my-style.style-pack.json     # 导入风格包
+bun run cli -- style export my-style --out ./pack.json     # 导出分享（默认不含参考图与权重）
+```
+
+配合 LoRA 训练页（或 `bun run cli -- lora ...`）可把你自己的画风训成 LoRA 并发布绑定到画风档案，B 档出图即用。数据集原则、验收顺序见[使用手册](docs/使用手册.md)。
+
+## 数据即文件
+
+`data/` 下全部是可手工翻的文件（项目 / 画风档案 / 产物 / LoRA 任务日志），删目录即删数据；`data/config.json` 是唯一配置文件。该目录不进 Git。
+
+## 给 AI Agent 用
+
+Web UI 与 CLI 都是同一 HTTP API（`http://127.0.0.1:7799/api/v1`）的客户端，agent 可直接驱动全链路。仓内自带 skill 正本（`skills/gitruck-ai-drama-desk/`），一条命令装进本机检测到的 Agent（Claude Code / Codex / Cursor / Gemini CLI 等）：
+
+```bash
+bun run cli -- skills install                      # 自动探测本机 Agent
+bun run cli -- skills install --agents codex,cursor  # 只装指定宿主
+bun run cli -- skills install --copy               # 不用链接，各宿主复制一份
+```
+
+统一正本落 `~/.agents/skills`，再链接（Windows 为 junction）到各 Agent 兼容目录；链接不可用时回退复制。装好后对 agent 说「把这份分镜稿投进工作台出片」，或显式 `/gitruck-ai-drama-desk style` / `/gitruck-ai-drama-desk lora` 驱动画风与训练管理。完整可移植 playbook 见 [`AGENT.md`](./AGENT.md)——任何 agent 读完即可驱动工作台，skill 只是薄壳。
+
+## 声明
+
+- **测试与开发规格为内部持有**：本仓公开源码与使用文档；测试套件与开发过程规格不随仓发布。
+- **模型权重**：本仓不分发任何模型权重；请自行从原始发布方下载并核对各自许可（社区蒸馏 / 加速版尤其）。HunyuanVideo 1.5 权重受腾讯社区许可地域约束（如欧盟 / 英国 / 韩国排除），使用前自行确认。
+- **ComfyUI**：GPL-3.0 项目，本仓仅经 HTTP API 集成，无代码派生。
+- **许可**：本仓源码以 MIT 许可发布（见 [LICENSE](LICENSE)）。

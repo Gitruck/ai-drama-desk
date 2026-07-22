@@ -1,0 +1,17 @@
+# musubi-tuner 数据集配置模板 · 风格 LoRA（Qwen-Image-Edit-2511，黑 control 训法）
+# 用法：复制为 lora/dataset.toml，把 <你的仓库目录> 换成本仓库的绝对路径（真实 dataset.toml 不入 Git）。
+# 结构：img/ = 风格 target + 同名 .txt caption；control/ = 同名黑图（社区 #682 黑控训法）
+
+[general]
+resolution = [1024, 1024]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = false
+
+[[datasets]]
+image_directory = "<你的仓库目录>/lora/dataset/img"
+control_directory = "<你的仓库目录>/lora/dataset/control"
+control_resolution = [1024, 1024]
+cache_directory = "<你的仓库目录>/lora/dataset/cache"
+num_repeats = 4

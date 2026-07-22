@@ -1,0 +1,94 @@
+{
+  "_说明": [
+    "运行配置模板：复制为 data/config.json 后按需修改（data/ 整目录不入 Git，密钥只存本地）。",
+    "首次启动若 data/config.json 不存在，服务端会自动写入一份同等默认值，也可不用本模板。",
+    "falKey：fal.ai 的 API Key（云端视频出口 fal-video）；留空则该出口不可用。",
+    "arkApiKey：火山方舟 API Key（Seedream 图像出口 seedream-image）；留空则该出口不可用。",
+    "comfyImage2.promptPrefix 是风格 LoRA 触发词示例，换成你自己训练/下载的 LoRA 触发词。",
+    "以 _ 开头的键仅作注释，多余键不影响加载。"
+  ],
+  "port": 7799,
+  "comfyUrl": "http://127.0.0.1:8188",
+  "falKey": "",
+  "arkApiKey": "",
+  "comfyImage": {
+    "template": "qwen-edit-keyframe.json",
+    "nodeMap": {
+      "prompt": { "id": "6", "field": "prompt" },
+      "negative": { "id": "7", "field": "prompt" },
+      "imageInputs": [
+        { "id": "10", "field": "image" },
+        { "id": "11", "field": "image" },
+        { "id": "12", "field": "image" }
+      ],
+      "seed": { "id": "15", "field": "seed" },
+      "width": { "id": "14", "field": "width" },
+      "height": { "id": "14", "field": "height" }
+    }
+  },
+  "comfyImage2": {
+    "template": "qwen-edit-keyframe-lora.json",
+    "promptPrefix": "example style",
+    "nodeMap": {
+      "prompt": { "id": "6", "field": "prompt" },
+      "negative": { "id": "7", "field": "prompt" },
+      "imageInputs": [
+        { "id": "10", "field": "image" },
+        { "id": "11", "field": "image" },
+        { "id": "12", "field": "image" }
+      ],
+      "seed": { "id": "15", "field": "seed" },
+      "width": { "id": "14", "field": "width" },
+      "height": { "id": "14", "field": "height" },
+      "loraName": { "id": "18", "field": "lora_name" },
+      "loraStrength": { "id": "18", "field": "strength_model" }
+    }
+  },
+  "comfyVideo": {
+    "template": "wan22-i2v-540p.json",
+    "nodeMap": {
+      "prompt": { "id": "6", "field": "text" },
+      "negative": { "id": "7", "field": "text" },
+      "startImage": { "id": "71", "field": "image" },
+      "seed": { "id": "57", "field": "noise_seed" },
+      "width": { "id": "73", "field": "width" },
+      "height": { "id": "73", "field": "height" },
+      "frames": { "id": "73", "field": "length" }
+    }
+  },
+  "comfyVideoHunyuan": {
+    "template": "hunyuan15-i2v-480p.json",
+    "nodeMap": {
+      "prompt": { "id": "44", "field": "text" },
+      "negative": { "id": "93", "field": "text" },
+      "startImage": { "id": "80", "field": "image" },
+      "seed": { "id": "127", "field": "noise_seed" },
+      "frames": { "id": "78", "field": "length" }
+    }
+  },
+  "falVideoModel": "fal-ai/wan/v2.2-a14b/image-to-video",
+  "seedreamModel": "doubao-seedream-5-0-pro-260628",
+  "seedreamSize": "1664x928",
+  "videoWidth": 960,
+  "videoHeight": 544,
+  "videoFps": 16,
+  "keyframeWidth": 1280,
+  "keyframeHeight": 720,
+  "refPolicies": {
+    "comfyui-image": { "refStrategy": "single-crop", "refBudget": 3 },
+    "comfyui-image2": { "refStrategy": "single-crop", "refBudget": 3 },
+    "seedream-image": { "refStrategy": "multi-image", "refBudget": 10 },
+    "mock-image": { "refStrategy": "none", "refBudget": 0 }
+  },
+  "prices": {
+    "comfyui-image": 0,
+    "comfyui-image2": 0,
+    "comfyui-video": 0,
+    "hunyuan-video": 0,
+    "fal-video": 0.7,
+    "seedream-image": 0.3,
+    "mock-image": 0,
+    "mock-video": 0
+  },
+  "defaultShotSec": 5
+}

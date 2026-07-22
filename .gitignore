@@ -1,0 +1,41 @@
+node_modules/
+web/dist/
+dist/
+__pycache__/
+
+# 开发工件不随公开仓分发（openspec 变更材料与测试内部持有）
+openspec/
+test/
+release/
+.idea/
+
+# 本地数据与密钥（画风档案、项目产物、运行配置全在 data/）
+data/
+
+# 纯内部文档
+
+# LoRA 训练本地数据与产物（公开仓只带 dataset.example.toml 模板）
+lora/dataset.toml
+lora/dataset/
+lora/output/
+lora/logs/
+lora/comparisons/
+
+.env
+.env.*
+!.env.example
+
+# Local model and rendered-media artifacts must never enter Git.
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+*.onnx
+*.npz
+*.mp4
+*.webm
+*.log
+docs/_*
+.codex/
