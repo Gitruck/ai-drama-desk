@@ -14,6 +14,16 @@
 
 ---
 
+## 界面一览
+
+| | |
+|:---:|:---:|
+| <img src="docs/screenshots/01-import-storyboard.png" width="420" alt="导入分镜稿"><br>**导入分镜稿** · 粘贴分镜稿 md，解析成结构化制片项目 | <img src="docs/screenshots/02-project-board.png" width="420" alt="项目工作区"><br>**项目工作区** · 角色资产（双参考集）+ 逐镜候选，引擎一键切换 |
+| <img src="docs/screenshots/03-shot-workspace.png" width="420" alt="镜头工作区"><br>**镜头工作区** · 每镜文本、Keyframe/视频候选，点击选用或重 roll | <img src="docs/screenshots/04-style-library.png" width="420" alt="画风资产库"><br>**画风资产库** · Style Lock、负面栈、参考图与 LoRA 绑定 |
+| <img src="docs/screenshots/05-lora-training.png" width="420" alt="LoRA 训练"><br>**LoRA 训练** · 提交前检查、后台训练、checkpoint 恢复与发布 | <img src="docs/screenshots/06-diagnostics.png" width="420" alt="设置与诊断"><br>**设置与诊断** · ComfyUI 五层就绪诊断，缺什么放哪里逐条点名 |
+
+---
+
 ## 为什么用 ai-drama-desk
 
 - **分镜稿进、片段包出**：粘贴一份分镜稿 md → 结构化成分镜卡片 → 逐镜出图、出片、抽卡挑选 → 一键导出带 manifest 的回轨包，文件名即回轨定位（`<slug>-<beatId>-s<n>.mp4`）。
