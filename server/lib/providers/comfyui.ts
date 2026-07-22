@@ -359,12 +359,21 @@ function providerDiagnostic(
     return { id, ready: false, checkedAt, service, runtime, workflow, nodes: { ...objectInfo.layer }, models: { ...objectInfo.layer } };
   }
   const missingNodes = deps.nodeTypes.filter((node) => !objectInfo.value?.[node]);
+  // 画风 LoRA 由 manifest 运行时注入（applyStyleLoraBinding 恒覆盖 nodeMap.loraName 指向的节点），
+  // 其模板占位名不是必需静态模型，从缺模核对中剔除。
+  const dynamicLoraNode = wf.nodeMap.loraName;
+  const isDynamicLoraSlot = (model: WorkflowDependency) =>
+    dynamicLoraNode != null && model.nodeId === dynamicLoraNode.id && model.field === dynamicLoraNode.field;
   const missingModels = deps.models.filter((model) => {
+    if (isDynamicLoraSlot(model)) return false;
     const options = inputOptions(objectInfo.value!, model.classType, model.field);
     return options != null && !options.includes(model.name);
   }).map((model) => `${model.category}/${model.name}`);
+  const hasDynamicLoraSlot = deps.models.some(isDynamicLoraSlot);
   const nodes: DiagnosticLayer = missingNodes.length ? { state: "not-ready", message: "缺少 workflow 必需节点", missing: missingNodes } : { state: "ready" };
-  const models: DiagnosticLayer = missingModels.length ? { state: "not-ready", message: "缺少 workflow 必需模型", missing: missingModels } : { state: "ready" };
+  const models: DiagnosticLayer = missingModels.length
+    ? { state: "not-ready", message: "缺少 workflow 必需模型", missing: missingModels }
+    : { state: "ready", ...(hasDynamicLoraSlot ? { message: "画风 LoRA 由 manifest 运行时注入" } : {}) };
   const ready = [service, runtime, workflow, nodes, models].every((layer) => layer.state === "ready");
   return { id, ready, checkedAt, service, runtime, workflow, nodes, models };
 }

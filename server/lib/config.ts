@@ -22,6 +22,24 @@ export function ensureDirs() {
   }
 }
 
+/**
+ * comfy workflow 配置在读取时补全结构性 nodeMap 字段。
+ * 仅当持久化配置用的是 DEFAULT 的同名 stock 模板时，才把默认 nodeMap 里
+ * 后加的键（如 loraName / loraStrength）补进陈旧配置——键级浅合并，用户已有的
+ * 键（含自定义 node id 与 imageInputs 数组）原样胜出。自定义模板（template 名不同）
+ * 尊重用户配置、不注入默认节点映射，避免把默认 node id 塞进结构不同的自定义图。
+ */
+export function mergeComfyConfig(
+  key: "comfyImage" | "comfyImage2" | "comfyVideo" | "comfyVideoHunyuan",
+  raw: Record<string, any>,
+): StudioConfig[typeof key] {
+  const rawCfg = raw[key];
+  const defaultCfg = DEFAULT_CONFIG[key];
+  if (!rawCfg) return defaultCfg;
+  if (!defaultCfg || rawCfg.template !== defaultCfg.template) return rawCfg;
+  return { ...defaultCfg, ...rawCfg, nodeMap: { ...defaultCfg.nodeMap, ...rawCfg.nodeMap } };
+}
+
 export function loadConfig(): StudioConfig {
   ensureDirs();
   if (!existsSync(CONFIG_PATH)) {
@@ -29,12 +47,16 @@ export function loadConfig(): StudioConfig {
     return { ...DEFAULT_CONFIG };
   }
   const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-  // 浅合并保新字段有默认值；prices/refPolicies 单独合并
+  // 浅合并保新字段有默认值；prices/refPolicies 单独合并；comfy 配置补全结构性 nodeMap 字段
   return {
     ...DEFAULT_CONFIG,
     ...raw,
     prices: { ...DEFAULT_CONFIG.prices, ...(raw.prices ?? {}) },
     refPolicies: { ...DEFAULT_CONFIG.refPolicies, ...(raw.refPolicies ?? {}) },
+    comfyImage: mergeComfyConfig("comfyImage", raw),
+    comfyImage2: mergeComfyConfig("comfyImage2", raw),
+    comfyVideo: mergeComfyConfig("comfyVideo", raw),
+    comfyVideoHunyuan: mergeComfyConfig("comfyVideoHunyuan", raw),
   };
 }
 
