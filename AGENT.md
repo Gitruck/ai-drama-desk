@@ -51,6 +51,7 @@ POST /api/v1/projects/<id>/export              # 导出回轨包 + manifest
 ```bash
 bun run cli -- health --json
 bun run cli -- charref <project> <角色名> --mode single|turnaround  # 角色参考图（人设锚点）
+bun run cli -- refs upload <project> <角色名> <文件...>              # 外部/宿主生图产物落库
 bun run cli -- style <list|create|edit|delete|import|export>   # 画风资产
 bun run cli -- lora  <train|status|resume|cancel|publish>      # LoRA 训练
 bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到本机 Agent
@@ -58,7 +59,8 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 
 | 命令 | 关键参数 | 说明 |
 |---|---|---|
-| `charref <project> <角色名>` | `--mode single\|turnaround`；`--provider`（缺省 comfyui-image）；`--count N`；`--desc` | 生成人设锚点：single 单人立绘 / turnaround 三视图设定表；产物落角色源图库即刻可挑可裁；A 档零前置兜底（无画风/锚图/LoRA 也能出） |
+| `charref <project> <角色名>` | `--mode single\|turnaround`；`--provider`（缺省 comfyui-image）；`--count N`；`--desc` | 生成人设锚点：single 单人立绘（完成自动设主参考）/ turnaround 三视图设定表；产物落角色源图库即刻可挑可裁；A 档零前置兜底。**注意**：这是「工作台管线」路线；用户想用 agent 宿主自带生图能力时不走本命令，宿主出图后用 `refs upload` 落库；用户未点名路线时先问 |
+| `refs upload <project> <角色名> <文件...>` | — | 把本地图片（宿主/外部生图产物）经服务端校验上传进该角色源图库，即刻进双参考集 |
 | `style list` | — | 列画风档案（带 LoRA 标记） |
 | `style create` | `--file profile.json` | 自建画风（id 小写字母数字连字符） |
 | `style edit <id>` | `--file patch.json` | 局部改档案 |

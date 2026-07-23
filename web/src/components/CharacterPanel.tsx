@@ -116,7 +116,7 @@ function CharacterCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
-  const [gen, setGen] = useState<{ running: boolean; mode?: string; error?: string }>({ running: false });
+  const [gen, setGen] = useState<{ running: boolean; mode?: string; error?: string; doneFile?: string; doneMode?: string }>({ running: false });
   const generationRef = c.generationRef ?? { status: c.refs.length ? "fallback" : "missing" };
   const multiRef = c.multiRef ?? { status: c.refs.length ? "fallback" : "missing", included: c.refs, excluded: [] };
   const generationUrl = generationRef.file ? characterAssetUrl(p.id, c, generationRef.file) : "";
@@ -129,6 +129,7 @@ function CharacterCard({
       const submitted = await api.generateCharRef(p.id, c.name, { mode, provider: kfProvider });
       const jobId = submitted.jobs?.[0]?.id;
       if (!jobId) throw new Error("入队失败");
+      let outputFile = "";
       const deadline = Date.now() + 15 * 60_000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
@@ -136,12 +137,13 @@ function CharacterCard({
         const job = jobs.find((j: any) => j.id === jobId);
         if (job && (job.status === "done" || job.status === "error")) {
           if (job.status === "error") throw new Error(job.error || "生成失败");
+          outputFile = (job.output ?? "").split("/").pop() ?? "";
           break;
         }
       }
       await onChanged();
-      setGen({ running: false });
-      setGenOpen(false);
+      // 完成态留在面板里：turnaround 给「去裁主参考」引导，single 报「已设为主参考」
+      setGen({ running: false, doneFile: outputFile, doneMode: mode });
     } catch (error) {
       setGen({ running: false, error: error instanceof Error ? error.message : String(error) });
     }
@@ -173,7 +175,7 @@ function CharacterCard({
             type="button"
             className={`upload-btn ${genOpen ? "on" : ""}`}
             disabled={gen.running}
-            onClick={() => { setGenOpen((x) => !x); setGen((g) => ({ ...g, error: undefined })); }}
+            onClick={() => { setGenOpen((x) => !x); setGen((g) => (g.running ? g : { running: false })); }}
             title="用当前引擎生成人设参考图（无需已有图）"
           >{gen.running ? "生成中…" : "✨ 生成"}</button>
           <label className="upload-btn">
@@ -210,8 +212,17 @@ function CharacterCard({
           <small className="dim">
             {gen.running
               ? `正在生成${gen.mode === "turnaround" ? "三视图" : "单人立绘"}…本地引擎可能需 1–2 分钟，产物出来即进源图库。`
-              : "无需已有图：A 档开源模型零前置也能出。产物落源图库，可再挑选/裁剪。挑图仍由你决定。"}
+              : gen.doneFile
+                ? gen.doneMode === "single"
+                  ? "✓ 已生成并自动设为单人主参考（原无显式主参考时）。"
+                  : "✓ 三视图已进源图库——最后一步：裁一张单人主参考，本地出图才不会复制人物。"
+                : "无需已有图：A 档开源模型零前置也能出。产物落源图库，可再挑选/裁剪。挑图仍由你决定。"}
           </small>
+          {gen.doneFile && gen.doneMode === "turnaround" && (
+            <div className="char-gen-row">
+              <button className="mini" onClick={() => { onEdit(gen.doneFile!); setGen({ running: false }); setGenOpen(false); }}>✂ 去裁单人主参考</button>
+            </div>
+          )}
           {gen.error && <div className="warn bad">生成失败：{gen.error}</div>}
         </div>
       )}
@@ -221,12 +232,12 @@ function CharacterCard({
           {generationUrl ? <img src={generationUrl} alt={`${c.name}生成主参考`} /> : <div className="generation-ref-empty">?</div>}
           <div>
             <span className={`generation-status ${generationRef.status}`}>
-              {generationRef.status === "ready" ? "已配置单人主参考" : generationRef.status === "fallback" ? "正在回退原图" : "缺少角色参考图"}
+              {generationRef.status === "ready" ? "已配置单人主参考" : generationRef.status === "fallback" ? "待裁单人主参考" : "缺少角色参考图"}
             </span>
             <small>
               {generationRef.status === "ready"
                 ? generationRef.crop ? "生成时使用裁剪副本，原图保持不变" : "生成时使用所选整图"
-                : generationRef.status === "fallback" ? "三视图可能被模型复制为多个人" : "本地出图只能依赖文字描述"}
+                : generationRef.status === "fallback" ? "点任一源图裁一张单人图（当前整图回退，三视图直喂会复制人物）" : "点「✨ 生成」直出人设图，或上传设定图"}
             </small>
           </div>
           <button

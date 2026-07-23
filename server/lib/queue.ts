@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { characterDir, getProject, getChoices, listCharacterRefs, listShotOutputs, saveProject, setChoice, shotDir, shotKey } from "./projects.ts";
 import { getStyle, StyleError } from "./styles.ts";
+import { refSetsOf, setCharacterGenerationReference } from "./character-refs.ts";
 import { assembleCharRefAnchors, assembleRefs, buildCharRefNegatives, buildCharRefPrompt, buildKeyframeNegatives, buildKeyframePrompt, buildVideoPrompts, wanFrames } from "./prompt.ts";
 import { comfyGenerate } from "./providers/comfyui.ts";
 import { falVideoGenerate } from "./providers/fal.ts";
@@ -324,7 +325,8 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
   if (!character) throw new Error(`角色不存在：${charName}`);
   const mode: CharRefMode = job.charRefMode ?? "single";
   const outDir = characterDir(p.id, charName);
-  const prefix = `gen-${mode}-${ts}`;
+  // mock 占位产物带 mock 标识，避免灰图混进真图堆被误当真产物
+  const prefix = job.provider === "mock-image" ? `gen-mock-${mode}-${ts}` : `gen-${mode}-${ts}`;
   const prompt = buildCharRefPrompt(p, character, mode, style, job.charRefDesc);
   const negative = buildCharRefNegatives(p, mode, style);
   const anchors = assembleCharRefAnchors(p, style, cfg, job.provider);
@@ -378,6 +380,11 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
     throw new Error("角色参考图产物未落入源图库");
   }
   job.output = `characters/${basename(outDir)}/${file}`;
+
+  // single 产物本来就是单人图：无显式主参考时自动补位（整图），有则绝不覆盖
+  if (mode === "single" && !refSetsOf(getProject(p.id)!).single[charName]) {
+    await setCharacterGenerationReference(p.id, charName, { source: file });
+  }
 
   const cost = cfg.prices[job.provider] ?? 0;
   if (cost > 0) {

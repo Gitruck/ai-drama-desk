@@ -16,11 +16,23 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 - 本地出图/出片需 ComfyUI（端口 8188）+ 模板与模型已配（见仓库 `templates/README.md` 与 README 模型清单）；没配时可先走 mock 或云端出口（fal / 火山方舟）。
 - 完整 API 面与决策清单见仓库根 `AGENT.md`（本 skill 是它的薄壳）。
 
+## 人设图的两条出图路线（歧义必问）
+
+给角色出人设图/三视图有两条路线，**语义完全不同**：
+
+| 路线 | 用户触发词 | 特点 | 你做 |
+|---|---|---|---|
+| **工作台生成（charref）** | 「用本地模型」「用工作台」「低成本出」「540p 抽卡」 | 画风锁（LoRA/Style Lock）、本地免费抽卡、产物直接落库 | `bun run cli -- charref <project> <角色名> --mode single\|turnaround` |
+| **你自带的生图能力** | 「用你自己的生图能力」「用 image2」「用 GPT 画」「你来画」 | 生图质量与理解力强，适合出首套锚点 | 用宿主生图（prompt 模板见配套教程 2.7 节：角色描述从分镜稿整段抄 + 三视/单人布局词），出图落本地文件后 `bun run cli -- refs upload <project> <角色名> <文件...>` 落库 |
+
+**铁律：用户只说「生成三视图/人设图」而没点名路线时，先问一句「用工作台管线（本地/云端模型），还是用我自带的生图能力？」——不许自选。** 两条路线产物最终都进该角色源图库与双参考集，后续挑图/裁剪一致。
+
 ## 命令式入口（用户显式点名时）
 
 | 用户说 | 你做 |
 |---|---|
-| `/gitruck-ai-drama-desk charref`（或「给父亲出个三视图/出人设图/角色定妆」） | 走 CLI：`bun run cli -- charref <project> <角色名> --mode single\|turnaround [--provider comfyui-image\|comfyui-image2\|seedream-image\|mock-image] [--count N] [--desc 补充]`，机器调用带 `--json`。缺省 `comfyui-image` 现成开源模型、零前置兜底 |
+| `/gitruck-ai-drama-desk charref`（或点名「用本地模型/工作台出三视图」） | 走 CLI：`bun run cli -- charref <project> <角色名> --mode single\|turnaround [--provider comfyui-image\|comfyui-image2\|seedream-image\|mock-image] [--count N] [--desc 补充]`，机器调用带 `--json`。缺省 `comfyui-image` 现成开源模型、零前置兜底。**未点名路线时先按上节问一句** |
+| `refs upload`（或宿主生图后「把图传进工作台」） | 走 CLI：`bun run cli -- refs upload <project> <角色名> <文件...>`（png/jpg/webp ≤20MB，服务端魔数校验，落库即进双参考集） |
 | `/gitruck-ai-drama-desk style`（或「管画风/导风格包」） | 走 CLI：`bun run cli -- style list \| create --file p.json \| edit <id> --file patch.json \| delete <id> --yes \| import <pack.json> \| export <id> --out pack.json`，机器调用一律带 `--json` |
 | `/gitruck-ai-drama-desk lora`（或「训个画风 LoRA」） | 走 CLI：`bun run cli -- lora train --file training.json \| status [id] \| resume <id> \| cancel <id> --yes \| publish <id> --style <style-id>`；train 前先跑提交前检查，缺文件/缺软件逐条报给用户 |
 | `/gitruck-ai-drama-desk health`（或「服务活着吗」） | `bun run cli -- health --json`，或直接 `GET /api/v1/health` |
