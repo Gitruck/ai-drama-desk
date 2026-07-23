@@ -101,8 +101,9 @@ export interface StoryboardDoc {
   refHints?: string;
 }
 
-export type JobKind = "keyframe" | "video";
+export type JobKind = "keyframe" | "video" | "charref";
 export type JobStatus = "queued" | "running" | "done" | "error";
+export type CharRefMode = "single" | "turnaround";
 
 export interface GenJob {
   id: string;
@@ -121,6 +122,12 @@ export interface GenJob {
   chainVideoProvider?: string;
   /** 参考预算不足等非致命告警（点名被裁减参考的角色），前端沿现有 jobs 链路展示 */
   warnings?: string[];
+  /** charref 任务：目标角色名（shotIndex 置 0 哨兵） */
+  charName?: string;
+  /** charref 任务：single=单人立绘 / turnaround=三视图设定表 */
+  charRefMode?: CharRefMode;
+  /** charref 任务：追加到角色权威描述的补充说明（可空） */
+  charRefDesc?: string;
 }
 
 export interface CostEntry {

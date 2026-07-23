@@ -29,7 +29,7 @@ import {
   StyleError,
   styleUsage,
 } from "./lib/styles.ts";
-import { enqueue, enqueueAuto, listJobs } from "./lib/queue.ts";
+import { enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
 import { exportProject } from "./lib/export.ts";
 import { diagnoseComfy } from "./lib/providers/comfyui.ts";
 import { deleteMediaOutput, MediaDeleteError, previewMediaDelete } from "./lib/media.ts";
@@ -407,6 +407,19 @@ export function createRequestHandler() {
         const provider = body.provider ?? (kind === "keyframe" ? "comfyui-image" : "comfyui-video");
         const job = enqueue(m[1], parseInt(m[2], 10), kind, provider);
         return json(job);
+      }
+
+      // 角色参考图（人设锚点）生成：产物直接落该角色源图库，即刻进双参考集
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/characters\/([^/]+)\/generate-ref$/);
+      if (m && req.method === "POST") {
+        const name = decodePathSegment(m[2]);
+        const body = (await req.json().catch(() => ({}))) as { mode?: string; provider?: string; count?: number; desc?: string };
+        const mode = body.mode === "turnaround" ? "turnaround" : body.mode === "single" ? "single" : null;
+        if (!mode) return err("mode 必须是 single 或 turnaround");
+        const provider = body.provider ?? "comfyui-image";
+        const count = Math.max(1, Math.min(4, Number.isFinite(body.count) ? Math.floor(body.count as number) : 1));
+        const enqueued = Array.from({ length: count }, () => enqueueCharRef(m![1], name, mode, provider, body.desc));
+        return json({ enqueued: enqueued.length, jobs: enqueued });
       }
 
       m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/shots\/(\d+)\/choose$/);

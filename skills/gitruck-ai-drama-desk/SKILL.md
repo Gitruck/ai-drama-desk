@@ -1,6 +1,6 @@
 ---
 name: gitruck-ai-drama-desk
-description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把一份「分镜稿 md」投进本地工作台（http://127.0.0.1:7799），驱动「keyframe（参考图/LoRA 锁角色与画风）→ I2V 出片抽卡 → 导出 return-v1 命名回轨包」闭环，并管理画风资产、LoRA 训练与 ComfyUI 诊断。当用户想「把分镜稿投进工作台出片 / 用本地开源模型出 AI 再现 / 低成本出片 / 540p 抽卡 / 管理画风档案或风格包 / 训练画风 LoRA / 诊断 ComfyUI 就绪度」时使用本 skill。支持命令式参数：`/gitruck-ai-drama-desk style` 管画风、`/gitruck-ai-drama-desk lora` 管训练、`/gitruck-ai-drama-desk health` 查服务。产物是片段包（拖回任意 NLE），审美取舍（挑图/挑片）永远留给用户。
+description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把一份「分镜稿 md」投进本地工作台（http://127.0.0.1:7799），驱动「角色参考图（人设锚点）→ keyframe（参考图/LoRA 锁角色与画风）→ I2V 出片抽卡 → 导出 return-v1 命名回轨包」闭环，并管理画风资产、LoRA 训练与 ComfyUI 诊断。当用户想「把分镜稿投进工作台出片 / 用本地开源模型出 AI 再现 / 给角色出人设图或三视图 / 低成本出片 / 540p 抽卡 / 管理画风档案或风格包 / 训练画风 LoRA / 诊断 ComfyUI 就绪度」时使用本 skill。支持命令式参数：`/gitruck-ai-drama-desk charref` 出人设图、`/gitruck-ai-drama-desk style` 管画风、`/gitruck-ai-drama-desk lora` 管训练、`/gitruck-ai-drama-desk health` 查服务。产物是片段包（拖回任意 NLE），审美取舍（挑图/挑片）永远留给用户。
 ---
 
 # gitruck-ai-drama-desk · AI 再现制片工作台驱动
@@ -20,6 +20,7 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 
 | 用户说 | 你做 |
 |---|---|
+| `/gitruck-ai-drama-desk charref`（或「给父亲出个三视图/出人设图/角色定妆」） | 走 CLI：`bun run cli -- charref <project> <角色名> --mode single\|turnaround [--provider comfyui-image\|comfyui-image2\|seedream-image\|mock-image] [--count N] [--desc 补充]`，机器调用带 `--json`。缺省 `comfyui-image` 现成开源模型、零前置兜底 |
 | `/gitruck-ai-drama-desk style`（或「管画风/导风格包」） | 走 CLI：`bun run cli -- style list \| create --file p.json \| edit <id> --file patch.json \| delete <id> --yes \| import <pack.json> \| export <id> --out pack.json`，机器调用一律带 `--json` |
 | `/gitruck-ai-drama-desk lora`（或「训个画风 LoRA」） | 走 CLI：`bun run cli -- lora train --file training.json \| status [id] \| resume <id> \| cancel <id> --yes \| publish <id> --style <style-id>`；train 前先跑提交前检查，缺文件/缺软件逐条报给用户 |
 | `/gitruck-ai-drama-desk health`（或「服务活着吗」） | `bun run cli -- health --json`，或直接 `GET /api/v1/health` |
@@ -27,7 +28,7 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 ## 工作流（agent 替用户跑，用户只在检查点出手）
 
 1. **投稿建项目**：`POST /api/v1/projects` body `{storyboardMd, styleId, slug, name}`。styleId 用用户画风库里的档案（`style list` 先看有什么；没有就引导导入风格包或自建）。返回的 warnings 逐条转告用户（缺秒数/缺角色等）。
-2. **提醒传角色参考图**（检查点）：角色一致性靠参考图 > 文字。让用户在工作台给每个角色传设定图（没有可先跑一轮 keyframe，挑最像的当参考图回填——bootstrap 起盘）。本地 A/B 档需在裁剪画布裁出单人主参考，三视图整图直喂有复制人物风险。
+2. **备角色参考图（人设锚点）**（检查点）：角色一致性靠参考图 > 文字。三条路任选——① 用户已有设定图 → 工作台角色卡「上传」；② **工作台内生成（推荐，断档已补齐）**：`charref <project> <角色名> --mode turnaround` 出三视图设定表、`--mode single` 出单人立绘，产物直接落该角色源图库，即刻可挑可裁；缺画风/锚图/LoRA 也能出（A 档现成开源模型零前置兜底）；③ 外部工具（ChatGPT 等）出图后手动上传。本地 A/B 档挑一张在裁剪画布裁出单人主参考（三视图整图直喂给镜头有复制人物风险，故先裁）。出人设仍是检查点：挑图交用户。
 3. **出图批次**：`POST /api/v1/projects/<id>/shots/<n>/keyframe` 或全自动 `POST /api/v1/projects/<id>/auto`。轮询 `GET /api/v1/jobs?project=<id>` 到全 done，失败逐条报错因。
 4. **用户挑图**（检查点）：抽卡与选用在工作台点击完成，别替用户拍审美。
 5. **出片批次**：同 auto/逐镜。默认本地 ComfyUI；用户嫌某镜动作塌 → 换 `fal-video` 重 roll 该镜。

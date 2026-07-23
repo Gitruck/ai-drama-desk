@@ -7,6 +7,7 @@ import { characterDir } from "./projects.ts";
 import { styleRefPath } from "./styles.ts";
 import type {
   CharacterDoc,
+  CharRefMode,
   Project,
   ProviderRefPolicy,
   Shot,
@@ -277,6 +278,65 @@ export function assembleRefs(
  */
 export function pickRefs(p: Project, shot: Shot, style: StyleProfile | null, cfg: StudioConfig, includeStyleRefs = true): string[] {
   return assembleRefs(p, shot, style, cfg, includeStyleRefs ? "comfyui-image" : "comfyui-image2").refImages;
+}
+
+// ===== 角色参考图（人设锚点）生成 =====
+// 与镜头图不同：这里是「立锚点」而非「演一镜」。角色描述为权威源，画风可缺省（开源零前置兜底）。
+
+/** 角色参考图正向提示词：single=单人立绘 / turnaround=正侧背三视设定表。Style Lock 可缺省。 */
+export function buildCharRefPrompt(
+  p: Project,
+  character: CharacterDoc,
+  mode: CharRefMode,
+  style: StyleProfile | null,
+  extraDesc?: string,
+): string {
+  const parts: string[] = [];
+  const lock = effectiveStyleLock(p.doc, style);
+  if (lock) parts.push(lock);
+  else parts.push("画风自由，干净的插画立绘，画面简洁。"); // 零前置兜底：无画风时给一个中性基调
+  parts.push(`角色：「${character.name}」——${character.description.split(/\r?\n/)[0]}`);
+  if (extraDesc?.trim()) parts.push(`补充：${extraDesc.trim()}`);
+  parts.push(mode === "turnaround"
+    ? "画一张角色设定表（character sheet）：同一角色的 正面全身 / 侧面全身 / 背面全身 三视图并排站立，素色浅底背景，无道具、无文字、无阴影堆砌。三个视角必须是同一个人，只是朝向不同，绝非三个不同的角色。"
+    : "画一张该角色的单人全身立绘：素色浅底背景，自然站姿，无道具、无文字、无多余阴影。画面里只有这一个人物。");
+  parts.push("普通人长相，生动但不美型。");
+  return parts.join("\n");
+}
+
+/** 角色参考图负面词：single 禁多人；turnaround 反过来禁「三个不同的人/脸不一致」而不禁三视并排。 */
+export function buildCharRefNegatives(p: Project, mode: CharRefMode, style: StyleProfile | null): string {
+  const common = "写实照片、伪电影感、3D 渲染、塑料皮肤、通用二次元萌脸大眼、黑白高反差、大面积饱和色、画面文字、水印；photorealistic, cinematic look, 3D render, plastic skin, text, watermark";
+  const modeNeg = mode === "single"
+    ? "多人、两人同框、群像、第二个人；multiple people, two people, group portrait"
+    : "三个不同的人、不同长相、脸型漂移、多个不同角色；three different people, inconsistent face, multiple different characters";
+  return [effectiveNegatives(p.doc, style), common, modeNeg].filter(Boolean).join("；");
+}
+
+/**
+ * 角色参考图的画风锚图注入（按档位）：
+ * A 档 comfyui-image = 可选锚图 ≤2（增强画风，不阻塞）；B 档 = 零锚图（LoRA 承担画风）；
+ * seedream = 按预算多图直喂；mock/none = 无。不注入角色自身既有 ref（正在生成锚点、避免自我复制）。
+ */
+export function assembleCharRefAnchors(
+  p: Project,
+  style: StyleProfile | null,
+  cfg: StudioConfig,
+  provider: string,
+): string[] {
+  const policy = refPolicyOf(cfg, provider);
+  if (!style || policy.refStrategy === "none" || provider === "comfyui-image2") return [];
+  const budget = provider === "comfyui-image" ? Math.min(2, policy.refBudget) : policy.refBudget;
+  const picks: string[] = [];
+  for (const f of p.styleRefPicks) {
+    if (picks.length >= budget) break;
+    if (style.refs.includes(f)) picks.push(styleRefPath(style.id, f));
+  }
+  // styleRefPicks 为空但画风有锚图时，兜底取前 budget 张给点画风参考
+  if (picks.length === 0) {
+    for (const f of style.refs.slice(0, budget)) picks.push(styleRefPath(style.id, f));
+  }
+  return picks;
 }
 
 /** Wan 系帧数量化：4n+1 */

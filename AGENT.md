@@ -50,6 +50,7 @@ POST /api/v1/projects/<id>/export              # 导出回轨包 + manifest
 
 ```bash
 bun run cli -- health --json
+bun run cli -- charref <project> <角色名> --mode single|turnaround  # 角色参考图（人设锚点）
 bun run cli -- style <list|create|edit|delete|import|export>   # 画风资产
 bun run cli -- lora  <train|status|resume|cancel|publish>      # LoRA 训练
 bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到本机 Agent
@@ -57,6 +58,7 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 
 | 命令 | 关键参数 | 说明 |
 |---|---|---|
+| `charref <project> <角色名>` | `--mode single\|turnaround`；`--provider`（缺省 comfyui-image）；`--count N`；`--desc` | 生成人设锚点：single 单人立绘 / turnaround 三视图设定表；产物落角色源图库即刻可挑可裁；A 档零前置兜底（无画风/锚图/LoRA 也能出） |
 | `style list` | — | 列画风档案（带 LoRA 标记） |
 | `style create` | `--file profile.json` | 自建画风（id 小写字母数字连字符） |
 | `style edit <id>` | `--file patch.json` | 局部改档案 |
@@ -81,6 +83,7 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 | `POST /projects` | 建项目：body `{storyboardMd, styleId?, slug?, name?}`（或预解析 `doc`）；返回 `{project, warnings}` |
 | `GET /projects`、`GET /projects/<id>` | 项目列表/详情 |
 | `POST /projects/<id>/characters/<名>/refs` | 上传角色源图（png/jpg/webp，≤20MB，按魔数校验） |
+| `POST /projects/<id>/characters/<名>/generate-ref` | 生成人设锚点：body `{mode:"single"\|"turnaround", provider?, count?, desc?}`；产物落源图库、即刻进双参考集 |
 | `POST /projects/<id>/shots/<n>/keyframe` | 单镜出图：body `{provider?}`，默认 `comfyui-image` |
 | `POST /projects/<id>/shots/<n>/video` | 单镜出片：body `{provider?}`，默认 `comfyui-video` |
 | `POST /projects/<id>/shots/<n>/choose` | 选用某张图/某条片：body `{kind, file}` |
