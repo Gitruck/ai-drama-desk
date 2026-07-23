@@ -344,6 +344,49 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
   );
 }
 
+/** 点缩略图放大预览：大图 / 带控件的视频，可左右切候选、就地选用/删除。 */
+function MediaPreview({
+  kind, file, url, idx, total, chosen,
+  onPrev, onNext, onChoose, onDelete, onClose,
+}: {
+  kind: "keyframe" | "video";
+  file: string; url: string; idx: number; total: number; chosen: boolean;
+  onPrev: () => void; onNext: () => void; onChoose: () => void; onDelete: () => void; onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && total > 1) onPrev();
+      else if (e.key === "ArrowRight" && total > 1) onNext();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, onPrev, onNext, total]);
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal media-preview-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="media-preview-head">
+          <div><b>{kind === "keyframe" ? "Keyframe" : "视频"}</b> <span className="dim small">{file} · {idx + 1}/{total}</span></div>
+          <button className="mini" onClick={onClose}>关闭</button>
+        </div>
+        <div className="media-preview-stage">
+          {total > 1 && <button className="preview-nav prev" title="上一张（←）" onClick={onPrev}>‹</button>}
+          {kind === "keyframe"
+            ? <img key={url} src={url} alt={file} />
+            : <video key={url} src={url} controls loop autoPlay muted />}
+          {total > 1 && <button className="preview-nav next" title="下一张（→）" onClick={onNext}>›</button>}
+        </div>
+        <div className="media-preview-actions">
+          <button className="primary" disabled={chosen} onClick={onChoose}>{chosen ? "✓ 当前选用" : "选用此候选"}</button>
+          <button className="danger" onClick={onDelete}>删除此候选</button>
+          <span className="dim small">← → 切换候选 · Esc 关闭</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShotCard({
   p,
   shot,
@@ -357,6 +400,7 @@ function ShotCard({
   vidProvider: string;
   onChanged: () => void;
 }) {
+  const [preview, setPreview] = useState<{ kind: "keyframe" | "video"; idx: number } | null>(null);
   const gen = async (kind: "keyframe" | "video", provider: string) => {
     await api.generate(p.id, shot.index, kind, provider);
     onChanged();
@@ -399,16 +443,13 @@ function ShotCard({
             </button>
           </div>
           <div className="thumbs">
-            {shot.keyframes.map((f: string) => (
+            {shot.keyframes.map((f: string, i: number) => (
               <div className="media-item" key={f}>
                 <img
                   className={shot.choices.keyframe === f ? "chosen" : ""}
                   src={projFile(p.id, `keyframes/${shot.key}/${f}`)}
-                  title={`${f}（点击选用）`}
-                  onClick={async () => {
-                    await api.choose(p.id, shot.index, "keyframe", f);
-                    onChanged();
-                  }}
+                  title={`${f}（点击放大预览）`}
+                  onClick={() => setPreview({ kind: "keyframe", idx: i })}
                 />
                 <button className="media-delete" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("keyframe", f)}>
                   ×
@@ -426,20 +467,17 @@ function ShotCard({
             </button>
           </div>
           <div className="thumbs">
-            {shot.videos.map((f: string) => (
+            {shot.videos.map((f: string, i: number) => (
               <div className="media-item" key={f}>
                 <video
                   className={shot.choices.video === f ? "chosen" : ""}
                   src={projFile(p.id, `videos/${shot.key}/${f}`)}
-                  title={`${f}（点击选用）`}
+                  title={`${f}（点击放大预览）`}
                   muted
                   loop
                   onMouseEnter={(e) => e.currentTarget.play()}
                   onMouseLeave={(e) => e.currentTarget.pause()}
-                  onClick={async () => {
-                    await api.choose(p.id, shot.index, "video", f);
-                    onChanged();
-                  }}
+                  onClick={() => setPreview({ kind: "video", idx: i })}
                 />
                 <button className="media-delete" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("video", f)}>
                   ×
@@ -450,6 +488,28 @@ function ShotCard({
           </div>
         </div>
       </div>
+
+      {preview && (() => {
+        const list: string[] = preview.kind === "keyframe" ? shot.keyframes : shot.videos;
+        const file = list[preview.idx];
+        if (!file) { setPreview(null); return null; } // 候选被删/清空，关闭
+        const dir = preview.kind === "keyframe" ? "keyframes" : "videos";
+        return (
+          <MediaPreview
+            kind={preview.kind}
+            file={file}
+            url={projFile(p.id, `${dir}/${shot.key}/${file}`)}
+            idx={preview.idx}
+            total={list.length}
+            chosen={shot.choices[preview.kind] === file}
+            onPrev={() => setPreview((s) => s && { ...s, idx: (s.idx - 1 + list.length) % list.length })}
+            onNext={() => setPreview((s) => s && { ...s, idx: (s.idx + 1) % list.length })}
+            onChoose={async () => { await api.choose(p.id, shot.index, preview.kind, file); onChanged(); }}
+            onDelete={async () => { await remove(preview.kind, file); setPreview(null); }}
+            onClose={() => setPreview(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
