@@ -489,3 +489,12 @@ th { color: var(--dim); font-size: 10px; letter-spacing: .04em; text-transform: 
 .ratio-row { align-items: center; }
 .ratio-row > span { margin-right: 2px; }
 .crop-preview-canvas { display: block; max-width: 100%; margin: 0 auto; border-radius: 7px; background: #e8e1d5; }
+
+/* ===== 角色卡：生成参考图 ===== */
+.char-head .char-head-actions { display: flex; gap: 8px; align-items: center; }
+button.upload-btn { border: none; background: none; padding: 0; font-family: inherit; line-height: 1.2; }
+button.upload-btn:disabled { opacity: .5; cursor: default; }
+button.upload-btn.on { text-decoration: underline; }
+.char-gen-panel { margin-top: 10px; padding: 9px 10px; border: 1px dashed var(--line-strong); border-radius: 9px; background: var(--surface-soft); display: grid; gap: 6px; }
+.char-gen-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.char-gen-panel small { color: var(--dim); font-size: 10px; line-height: 1.35; }

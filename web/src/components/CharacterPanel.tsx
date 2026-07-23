@@ -22,6 +22,14 @@ export function strategyBadgeText(policy: RefPolicy): string {
   return `本工作流：每角色单人 1 图 · 总预算 ${policy.refBudget}`;
 }
 
+/** 生成参考图时用当前 keyframe 引擎；给个友好标签 + 零前置提示。 */
+const GEN_PROVIDER_LABEL: Record<string, string> = {
+  "comfyui-image": "本地 A 档 · 开源模型零前置",
+  "comfyui-image2": "本地 B 档 · 画风 LoRA",
+  "seedream-image": "Seedream 云端",
+  "mock-image": "mock · 仅占位演练",
+};
+
 /**
  * 角色资产区：共享源图 + 双参考集，随当前 keyframe provider 的参考策略切换视图。
  * single-crop → 单人单图集（裁剪主参考）；multi-image → 多图勾选墙（默认全选 − excluded）；none → 空态提示。
@@ -69,6 +77,7 @@ export function CharacterPanel({
             p={p}
             character={c}
             strategy={policy.refStrategy}
+            kfProvider={kfProvider}
             onEdit={(source) => setEditing({ character: c, source })}
             onRemoveSource={(file) => removeSource(c, file)}
             onChanged={onChanged}
@@ -92,6 +101,7 @@ function CharacterCard({
   p,
   character: c,
   strategy,
+  kfProvider,
   onEdit,
   onRemoveSource,
   onChanged,
@@ -99,14 +109,43 @@ function CharacterCard({
   p: any;
   character: any;
   strategy: RefPolicy["refStrategy"];
+  kfProvider: string;
   onEdit: (source: string) => void;
   onRemoveSource: (file: string) => void;
   onChanged: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [genOpen, setGenOpen] = useState(false);
+  const [gen, setGen] = useState<{ running: boolean; mode?: string; error?: string }>({ running: false });
   const generationRef = c.generationRef ?? { status: c.refs.length ? "fallback" : "missing" };
   const multiRef = c.multiRef ?? { status: c.refs.length ? "fallback" : "missing", included: c.refs, excluded: [] };
   const generationUrl = generationRef.file ? characterAssetUrl(p.id, c, generationRef.file) : "";
+
+  // 用当前引擎生成人设图：入队 → 自轮询到完成 → 刷新（新图进源图库即刻可见）
+  const generateRef = async (mode: "single" | "turnaround") => {
+    if (gen.running) return;
+    setGen({ running: true, mode });
+    try {
+      const submitted = await api.generateCharRef(p.id, c.name, { mode, provider: kfProvider });
+      const jobId = submitted.jobs?.[0]?.id;
+      if (!jobId) throw new Error("入队失败");
+      const deadline = Date.now() + 15 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const jobs = await api.jobs(p.id);
+        const job = jobs.find((j: any) => j.id === jobId);
+        if (job && (job.status === "done" || job.status === "error")) {
+          if (job.status === "error") throw new Error(job.error || "生成失败");
+          break;
+        }
+      }
+      await onChanged();
+      setGen({ running: false });
+      setGenOpen(false);
+    } catch (error) {
+      setGen({ running: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  };
 
   const toggleExclusion = async (file: string) => {
     if (busy) return;
@@ -129,28 +168,53 @@ function CharacterCard({
     <div className="char-card">
       <div className="char-head">
         <div><b>{c.name}</b><span>{c.refs.length} 张源图（两集共享）</span></div>
-        <label className="upload-btn">
-          ＋ 上传
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={async (e) => {
-              if (e.target.files?.length) {
-                try {
-                  await api.uploadCharRefs(p.id, c.name, e.target.files);
-                  onChanged();
-                } catch (error) {
-                  window.alert(`上传失败：${error instanceof Error ? error.message : String(error)}`);
+        <div className="char-head-actions">
+          <button
+            type="button"
+            className={`upload-btn ${genOpen ? "on" : ""}`}
+            disabled={gen.running}
+            onClick={() => { setGenOpen((x) => !x); setGen((g) => ({ ...g, error: undefined })); }}
+            title="用当前引擎生成人设参考图（无需已有图）"
+          >{gen.running ? "生成中…" : "✨ 生成"}</button>
+          <label className="upload-btn">
+            ＋ 上传
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={async (e) => {
+                if (e.target.files?.length) {
+                  try {
+                    await api.uploadCharRefs(p.id, c.name, e.target.files);
+                    onChanged();
+                  } catch (error) {
+                    window.alert(`上传失败：${error instanceof Error ? error.message : String(error)}`);
+                  }
                 }
-              }
-              // 清空 value：否则二次选同一文件不触发 onChange，重传链路静默断
-              e.target.value = "";
-            }}
-          />
-        </label>
+                // 清空 value：否则二次选同一文件不触发 onChange，重传链路静默断
+                e.target.value = "";
+              }}
+            />
+          </label>
+        </div>
       </div>
+
+      {genOpen && (
+        <div className="char-gen-panel">
+          <div className="char-gen-row">
+            <button className="mini" disabled={gen.running} onClick={() => generateRef("single")}>单人立绘</button>
+            <button className="mini" disabled={gen.running} onClick={() => generateRef("turnaround")}>三视图设定表</button>
+            <span className="dim small">引擎：{GEN_PROVIDER_LABEL[kfProvider] ?? kfProvider}</span>
+          </div>
+          <small className="dim">
+            {gen.running
+              ? `正在生成${gen.mode === "turnaround" ? "三视图" : "单人立绘"}…本地引擎可能需 1–2 分钟，产物出来即进源图库。`
+              : "无需已有图：A 档开源模型零前置也能出。产物落源图库，可再挑选/裁剪。挑图仍由你决定。"}
+          </small>
+          {gen.error && <div className="warn bad">生成失败：{gen.error}</div>}
+        </div>
+      )}
 
       {strategy === "single-crop" && (
         <div className={`generation-ref-summary ${generationRef.status}`}>

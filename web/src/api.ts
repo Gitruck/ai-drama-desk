@@ -66,6 +66,8 @@ export const api = {
   },
   deleteCharRef: (id: string, name: string, file: string) =>
     req(`/api/v1/projects/${id}/characters/${encodeURIComponent(name)}/refs/${encodeURIComponent(file)}`, { method: "DELETE" }),
+  generateCharRef: (id: string, name: string, body: { mode: "single" | "turnaround"; provider: string; count?: number; desc?: string }) =>
+    req(`/api/v1/projects/${id}/characters/${encodeURIComponent(name)}/generate-ref`, { method: "POST", body: JSON.stringify(body) }),
   setMultiRefExclusions: (id: string, name: string, excluded: string[]) =>
     req(`/api/v1/projects/${id}/characters/${encodeURIComponent(name)}/multi-refs`, {
       method: "POST",
