@@ -469,7 +469,8 @@ th { color: var(--dim); font-size: 10px; letter-spacing: .04em; text-transform: 
 .char-ref-tile .excluded-tag { background: rgba(120,52,40,.82); }
 .char-ref-tile .tile-actions { position: absolute; top: -6px; right: -6px; display: none; gap: 2px; }
 .char-ref-tile:hover .tile-actions { display: flex; }
-.tile-btn { width: 18px; height: 18px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); color: var(--ink); font-size: 10px; line-height: 1; cursor: pointer; }
+/* min-width/height 必须显式压过全局 button{min-height:40px}，否则被钳成竖椭圆 */
+.tile-btn { flex: 0 0 auto; width: 18px; height: 18px; min-width: 18px; min-height: 18px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); color: var(--ink); font-size: 10px; line-height: 1; cursor: pointer; }
 .tile-btn:hover { border-color: var(--accent); }
 .tile-btn.danger:hover { border-color: #b0503e; color: #b0503e; }
 
