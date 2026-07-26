@@ -6,6 +6,15 @@ export class DeskApiError extends Error {
   }
 }
 
+export function serviceUnavailableMessage(baseUrl: string): string {
+  return [
+    `工作台服务不可达：${baseUrl}。`,
+    "先检查服务地址或 GITRUCK_AI_DRAMA_DESK_URL；",
+    "若服务尚未启动，请在工作台仓库或已安装发行物中启动。",
+    "当前目录未知时不要直接运行 bun run start，也不要在磁盘中盲目查找仓库。",
+  ].join("");
+}
+
 export class DeskApiClient {
   constructor(
     public readonly baseUrl = process.env.GITRUCK_AI_DRAMA_DESK_URL ?? "http://127.0.0.1:7799/api/v1",
@@ -21,7 +30,7 @@ export class DeskApiClient {
         signal: init?.signal ?? AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
-      throw new DeskApiError(`工作台服务不可达：${this.baseUrl}（先运行 bun run start）`, 0, "SERVICE_UNAVAILABLE", error);
+      throw new DeskApiError(serviceUnavailableMessage(this.baseUrl), 0, "SERVICE_UNAVAILABLE", error);
     }
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody | T;
     if (!response.ok) {

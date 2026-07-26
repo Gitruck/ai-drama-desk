@@ -228,6 +228,18 @@ bun run cli -- style export my-style --out ./pack.json     # 导出分享（默�
 
 Web UI 与 CLI 都是同一 HTTP API（`http://127.0.0.1:7799/api/v1`）的客户端，agent 可直接驱动全链路。仓内自带 skill 正本（`skills/gitruck-ai-drama-desk/`），一条命令装进本机检测到的 Agent（Claude Code / Codex / Cursor / Gemini CLI 等）：
 
+### 把已有项目交给 Agent
+
+服务已经启动时，Agent 不需要知道工作台仓库位于哪个目录；只要拿到 **API 地址 + 项目 ID**，就能通过版本化 HTTP API 定位项目并继续调用角色参考图、出图、出片与导出接口。默认 API 地址是 `http://127.0.0.1:7799/api/v1`。
+
+1. 在工作台左侧进入目标项目。
+2. 在项目标题下方的元信息行找到 `项目 ID`，点击同一胶囊内的「复制」。
+3. 把复制出的 ID 连同任务发给 Agent，例如：`请给项目 proj-ms1aq6nv 的「退伍士兵」生成人设图`。
+
+Agent 的正确顺序是先请求 `GET /health`，再请求 `GET /projects/<id>` 校验项目，成功后直接走 HTTP API；不应为了接管已有项目搜索仓库。只有在服务尚未启动、需要修改仓库，或只能从源码运行 CLI 时，才需要提供明确的仓库路径。非默认服务地址通过 `GITRUCK_AI_DRAMA_DESK_URL` 指定；已安装独立 CLI 时也可直接使用，无需仓库 cwd。
+
+### 安装工作台 skill
+
 ```bash
 bun run cli -- skills install                      # 自动探测本机 Agent
 bun run cli -- skills install --agents codex,cursor  # 只装指定宿主

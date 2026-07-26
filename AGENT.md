@@ -15,7 +15,8 @@ playbook 的薄壳。
 ## 0. 一句话流程
 
 ```
-bun run start                                  # 起服务（构建前端 + API），http://127.0.0.1:7799
+GET  /api/v1/health                            # 先确认工作台 API 可达
+GET  /api/v1/projects/<id>                     # 已有项目先用用户复制的 ID 校验
 POST /api/v1/projects {storyboardMd,...}       # 投分镜稿建项目
 POST /api/v1/projects/<id>/auto                # 全自动补齐（无图先出图，再接力出片）
 GET  /api/v1/jobs?project=<id>                 # 轮询到全 done
@@ -24,9 +25,29 @@ POST /api/v1/projects/<id>/export              # 导出回轨包 + manifest
 
 产物落在项目目录 `exports/aidrama/`，用户把满意的片段拖回自己的 NLE 按 beat 区间对齐。
 
+### 0.1 已有项目的最短接管路径
+
+已有项目的最小交接信息只有两项：
+
+- **API Base**：默认 `http://127.0.0.1:7799/api/v1`，非默认地址由用户给出或读取
+  `GITRUCK_AI_DRAMA_DESK_URL`。
+- **项目 ID**：用户在项目页标题下方点击「项目 ID · 复制」取得。
+
+Agent 按以下顺序执行：
+
+1. `GET <API Base>/health`
+2. `GET <API Base>/projects/<project-id>`
+3. 项目存在后，直接调用本手册 2.2 节的 HTTP API
+
+前两步成功时，**不需要仓库路径，也不得为了接管项目扫描磁盘寻找仓库**。项目 ID 无效就请用户从
+项目页重新复制；API 不可达就先核对地址。只有服务尚未启动、需要修改仓库，或只能从源码调用 CLI 时，
+才需要用户提供明确仓库路径。
+
 ---
 
 ## 1. 一次性准备（只做一次）
+
+本节只适用于安装/启动工作台。若 0.1 节的健康检查已成功，直接跳过本节。
 
 1. **装 bun**（运行时）：https://bun.sh ；mock 演练与导出实测另需本地 `ffmpeg`（PATH 可见）。
 2. **拿到仓库**：`git clone https://github.com/Gitruck/ai-drama-desk.git && cd ai-drama-desk && bun install`。
@@ -40,13 +61,17 @@ POST /api/v1/projects/<id>/export              # 导出回轨包 + manifest
 7. **（可选）把 skill 装进本机 Agent**：`bun run cli -- skills install`（统一正本 `~/.agents/skills` →
    链接到检测出的各 Agent 兼容目录；`--agents codex,cursor` 指定宿主、`--copy` 回退复制）。
 
-> agent 自检：任何有状态动作前先打 `/health`；服务没起就引导用户 `bun run start`，别自己猜端口。
+> agent 自检：任何有状态动作前先打 `/health`；服务没起时，请用户在明确的工作台仓库或已安装发行物中
+> 启动服务。当前目录与仓库路径未知时，不直接运行 `bun run start`，也不做宽范围磁盘扫描。
 
 ---
 
 ## 2. 命令面
 
 ### 2.1 CLI（服务的瘦客户端，机器调用一律带 `--json`）
+
+仅在独立 CLI 已安装、仓库路径已知，或用户明确要求 CLI 时走这一层；仅掌握 API Base + 项目 ID 时直接走
+2.2 节，不把缺少仓库 cwd 当成阻塞。
 
 ```bash
 bun run cli -- health --json
@@ -123,16 +148,19 @@ agent 只负责把差值大、被 skip 的镜明确点名。
 
 ## 4. Agent 决策清单（自然语言 → 调用）
 
-1. **分镜稿在哪**：用户给 md 文件/文本 → `storyboardMd` 投稿；给的是结构化 `shots.json` → 走 `doc` 字段。
+1. **先判断是已有项目还是新投稿**：用户给了项目 ID → 按 0.1 节检查 `/health` 与
+   `/projects/<id>`，成功后直接走 API，不找仓库；没有项目 ID 但明确指向工作台里的项目 → 请用户从项目页复制，
+   或用 `GET /projects` 列出候选后让用户确认，不能按项目名称猜。
+2. **分镜稿在哪**：新投稿时，用户给 md 文件/文本 → `storyboardMd` 投稿；给的是结构化 `shots.json` → 走 `doc` 字段。
    都没有 → 先让用户产一份（格式见 README「输入契约」），别硬编。
-2. **画风**：`style list` 看用户画风库；有就带 `styleId`，没有就引导「导入风格包或自建画风」，不擅自杜撰画风。
-3. **引擎选择**：没配 ComfyUI/Key → mock 演练并明说这是占位产物；本地就绪 → comfyui 系；用户赶工或
+3. **画风**：`GET /styles` 或 `style list` 看用户画风库；有就带 `styleId`，没有就引导「导入风格包或自建画风」，不擅自杜撰画风。
+4. **引擎选择**：没配 ComfyUI/Key → mock 演练并明说这是占位产物；本地就绪 → comfyui 系；用户赶工或
    某镜动作复杂 → 该镜单发 `fal-video` 重 roll。B 档（`comfyui-image2`）只在当前画风绑了 LoRA 时可用。
-4. **检查点留给用户**：传参考图、挑 keyframe、挑视频、删除确认——都是用户动作；agent 只驱动批次、
+5. **检查点留给用户**：传参考图、挑 keyframe、挑视频、删除确认——都是用户动作；agent 只驱动批次、
    报状态、转告 warnings（缺秒数/缺角色/超预算裁减点名等），不替用户拍审美。
-5. **轮询与交代**：`/jobs` 轮询到全 done；失败逐条报错因（模板未配 / 模型缺失 / 服务离线），
+6. **轮询与交代**：`/jobs` 轮询到全 done；失败逐条报错因（模板未配 / 模型缺失 / 服务离线），
    引导对应修复（`/diagnostics/comfyui`、README 模型清单、`data/config.json`）。
-6. **导出后读 manifest 再说话**：deltaSec 偏差大的镜、skipped 的镜、totalCost——如实转告；
+7. **导出后读 manifest 再说话**：deltaSec 偏差大的镜、skipped 的镜、totalCost——如实转告；
    不要只说「导出成功」。
 
 ---
@@ -140,27 +168,35 @@ agent 只负责把差值大、被 skip 的镜明确点名。
 ## 5. 典型调用
 
 ```bash
-# 起服务与体检
-bun run start
-curl http://127.0.0.1:7799/api/v1/health
+# 已有项目：先体检与校验，不需要仓库 cwd
+API_BASE="${GITRUCK_AI_DRAMA_DESK_URL:-http://127.0.0.1:7799/api/v1}"
+PROJECT_ID="<project-id>"
+curl "$API_BASE/health"
+curl "$API_BASE/projects/$PROJECT_ID"
+
+# 人设三视图：直调 API → 轮询
+curl -X POST "$API_BASE/projects/$PROJECT_ID/characters/%E7%88%B6%E4%BA%B2/generate-ref" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"turnaround","provider":"comfyui-image","count":1}'
+curl "$API_BASE/jobs?project=$PROJECT_ID"
 
 # 投稿建项目（读本地分镜稿文件塞进 storyboardMd）
-curl -X POST http://127.0.0.1:7799/api/v1/projects \
+curl -X POST "$API_BASE/projects" \
   -H "Content-Type: application/json" \
   -d '{"storyboardMd":"<md 全文>","styleId":"my-style","slug":"lighthouse","name":"灯塔与机械信鸽"}'
 
 # mock 全链路演练（零 GPU 零 Key）
-curl -X POST http://127.0.0.1:7799/api/v1/projects/<id>/auto \
+curl -X POST "$API_BASE/projects/$PROJECT_ID/auto" \
   -H "Content-Type: application/json" \
   -d '{"keyframeProvider":"mock-image","videoProvider":"mock-video"}'
 
 # 单镜换云端重 roll
-curl -X POST http://127.0.0.1:7799/api/v1/projects/<id>/shots/3/video \
+curl -X POST "$API_BASE/projects/$PROJECT_ID/shots/3/video" \
   -H "Content-Type: application/json" -d '{"provider":"fal-video"}'
 
 # 轮询 → 导出
-curl "http://127.0.0.1:7799/api/v1/jobs?project=<id>"
-curl -X POST http://127.0.0.1:7799/api/v1/projects/<id>/export
+curl "$API_BASE/jobs?project=$PROJECT_ID"
+curl -X POST "$API_BASE/projects/$PROJECT_ID/export"
 ```
 
 ---
@@ -169,7 +205,7 @@ curl -X POST http://127.0.0.1:7799/api/v1/projects/<id>/export
 
 | 现象 | 处置 |
 |---|---|
-| CLI/API 连不上 | 服务没起 → `bun run start`；非默认地址 → 设 `GITRUCK_AI_DRAMA_DESK_URL` |
+| CLI/API 连不上 | 先核对实际 API Base 与 `GITRUCK_AI_DRAMA_DESK_URL`；服务确实没起时，请用户在明确的工作台仓库/发行物中启动。路径未知就询问，不盲扫磁盘、不在未知 cwd 执行 `bun run start` |
 | ComfyUI 引擎报未配置/离线 | `GET /diagnostics/comfyui` 看五层哪层红：缺节点装插件重启、缺模型按 README 清单落位、模板未登记看 `templates/README.md` |
 | B 档置灰 / 拒绝提交 | 当前画风没绑 LoRA manifest → `lora publish` 或手填画风 manifest 的 `weightsPath` |
 | 云引擎报缺 Key | `data/config.json` 填 `falKey` / `arkApiKey`（或 `PUT /config`），密钥不会回显 |

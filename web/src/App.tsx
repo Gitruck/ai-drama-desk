@@ -125,6 +125,69 @@ function PageHeader({
   );
 }
 
+async function writeClipboard(value: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // 权限/安全上下文拒绝时继续走兼容回退。
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  let copied = false;
+  try {
+    textarea.select();
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+  if (!copied) throw new Error("浏览器未允许复制");
+}
+
+function ProjectIdCopy({ id }: { id: string }) {
+  const [status, setStatus] = useState<"idle" | "copied" | "error">("idle");
+  const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    setStatus("idle");
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, [id]);
+
+  const copy = async () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    try {
+      await writeClipboard(id);
+      setStatus("copied");
+    } catch {
+      setStatus("error");
+    }
+    resetTimer.current = setTimeout(() => setStatus("idle"), 1800);
+  };
+
+  return (
+    <button
+      type="button"
+      className={`project-id-copy ${status}`}
+      title="复制项目 ID，供 Agent、CLI 或 HTTP API 定位当前项目"
+      aria-label={`复制项目 ID ${id}`}
+      onClick={copy}
+    >
+      <span>项目 ID</span>
+      <code>{id}</code>
+      <b aria-live="polite">{status === "copied" ? "已复制" : status === "error" ? "重试" : "复制"}</b>
+    </button>
+  );
+}
+
 function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: string) => void }) {
   const [md, setMd] = useState("");
   const [name, setName] = useState("");
@@ -245,6 +308,7 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
         title={p.name}
         description={`时间区间 ${p.doc.trackSt}s → ${p.doc.trackEd}s，约 ${p.doc.totalSec}s，共 ${p.doc.shots.length} 镜。`}
         meta={<>
+          <ProjectIdCopy id={p.id} />
           <span className="meta-pill">{p.doc.shots.length} 个镜头</span>
           <span className={`meta-pill ${style?.lora ? "success" : ""}`}>LoRA {style?.lora ? "已绑定" : "未绑定"}</span>
           <span className="meta-pill">累计成本 ¥{p.totalCost}</span>

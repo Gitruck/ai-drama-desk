@@ -156,6 +156,27 @@ code { padding: 2px 6px; border-radius: 5px; background: var(--surface-strong); 
 }
 .meta-pill.success { border-color: #c8dacb; background: var(--ok-soft); color: var(--ok); }
 .meta-pill.compact { min-height: 22px; margin-left: 7px; padding: 2px 7px; }
+button.project-id-copy {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--surface-soft);
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+button.project-id-copy:hover { border-color: var(--accent); background: var(--accent-soft); }
+button.project-id-copy code { color: var(--ink); font: 600 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+button.project-id-copy b { color: var(--accent); font-size: 10px; }
+button.project-id-copy.copied { border-color: #c8dacb; background: var(--ok-soft); }
+button.project-id-copy.copied b { color: var(--ok); }
+button.project-id-copy.error { border-color: #dfbdb2; background: var(--bad-soft); }
+button.project-id-copy.error b { color: var(--bad); }
 .page-actions, .page-actions-row { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; flex-wrap: wrap; }
 .surface-card, .style-card, .lora-form-card, .lora-jobs-card {
   border: 1px solid var(--line);
