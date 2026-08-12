@@ -6,7 +6,7 @@ import { loadConfig } from "./config.ts";
 import { characterDir, getProject, getChoices, listCharacterRefs, listShotOutputs, saveProject, setChoice, shotDir, shotKey } from "./projects.ts";
 import { getStyle, StyleError } from "./styles.ts";
 import { refSetsOf, setCharacterGenerationReference } from "./character-refs.ts";
-import { assembleCharRefAnchors, assembleRefs, buildCharRefNegatives, buildCharRefPrompt, buildKeyframeNegatives, buildKeyframePrompt, buildVideoPrompts, wanFrames } from "./prompt.ts";
+import { assembleCharRefAnchors, assembleRefs, buildCharRefNegatives, buildCharRefPrompt, buildKeyframeNegatives, buildKeyframePrompt, buildVideoPrompts, h3Frames, wanFrames } from "./prompt.ts";
 import { comfyGenerate } from "./providers/comfyui.ts";
 import { falVideoGenerate } from "./providers/fal.ts";
 import { mockKeyframe, mockVideo } from "./providers/mock.ts";
@@ -20,14 +20,41 @@ let seq = 0;
 type Lane = "local" | "cloud" | "mock";
 const LANE_LIMIT: Record<Lane, number> = { local: 1, cloud: 2, mock: 2 };
 
-function laneOf(provider: string): Lane {
-  if (provider.startsWith("comfyui")) return "local";
+/**
+ * 本地 ComfyUI 驱动、但出口 id 不以 comfyui 开头的档位。
+ * 这类出口同样吃本机 GPU，必须走 local 车道（串行 + 抢 GPU 租约），
+ * 否则会落进 cloud 车道并发 2 且不抢租约——H3 单条常驻约 21GB/24GB，
+ * 并发两条或与 Wan2.2 / LoRA 训练并行必 OOM。
+ */
+const LOCAL_GPU_PROVIDERS = new Set(["hunyuan-video", "h3-video"]);
+
+export function laneOf(provider: string): Lane {
+  if (provider.startsWith("comfyui") || LOCAL_GPU_PROVIDERS.has(provider)) return "local";
   if (provider.startsWith("mock")) return "mock";
   return "cloud";
 }
 
 export function listJobs(projectId?: string): GenJob[] {
   return projectId ? jobs.filter((j) => j.projectId === projectId) : jobs;
+}
+
+/**
+ * 清掉已结束任务的记录（前端的失败/告警横幅据 jobs 渲染，不清就一直挂着）。
+ * 只动 done / error，queued 与 running 一律不碰——删在跑的任务会让调度器丢失状态。
+ * 返回实际清掉的条数。
+ */
+export function dismissJobs(opts: { projectId?: string; ids?: string[] } = {}): number {
+  const idSet = opts.ids?.length ? new Set(opts.ids) : undefined;
+  let removed = 0;
+  for (let i = jobs.length - 1; i >= 0; i--) {
+    const j = jobs[i]!;
+    if (j.status !== "done" && j.status !== "error") continue;
+    if (opts.projectId && j.projectId !== opts.projectId) continue;
+    if (idSet && !idSet.has(j.id)) continue;
+    jobs.splice(i, 1);
+    removed++;
+  }
+  return removed;
 }
 
 /** 是否已有同镜同类任务在排队/运行（防重复入队烧钱烧卡） */
@@ -275,6 +302,22 @@ async function runJob(job: GenJob) {
           startImage: kfPath,
           seed: Math.floor(Math.random() * 2 ** 31),
           frames: wanFrames(durationSec, 24),
+          outDir,
+          outPrefix: prefix,
+        });
+      } else if (job.provider === "h3-video") {
+        if (!cfg.comfyVideoH3) throw new Error("未配置 H3 workflow（settings → comfyVideoH3）");
+        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        // H3 无负分支（权重已 CFG 蒸馏），不传 negative；固定 24fps，帧数按 17k+5 栅格吸附
+        outputs = await comfyGenerate({
+          comfyUrl: cfg.comfyUrl,
+          wf: cfg.comfyVideoH3,
+          prompt: pos,
+          startImage: kfPath,
+          seed: Math.floor(Math.random() * 2 ** 31),
+          width: cfg.videoWidth,
+          height: cfg.videoHeight,
+          frames: h3Frames(durationSec),
           outDir,
           outPrefix: prefix,
         });

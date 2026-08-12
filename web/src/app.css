@@ -238,6 +238,26 @@ button.danger:hover { background: var(--bad-soft); }
 .row.compact { margin: 0; gap: 8px; }
 .warn { margin: 10px 0; padding: 10px 12px; border: 1px solid #e8d5aa; border-radius: 8px; background: #faf0d9; color: #725d2c; }
 .warn.bad { border-color: #e0bdb2; background: var(--bad-soft); color: var(--bad); }
+/* 关闭按钮：必须用 button.xxx 压掉全局 button 的 min-height:40px/padding，否则被撑成竖椭圆。
+   走 float 而不是绝对定位，免得改动 .warn 容器影响别处对它的复用。 */
+button.warn-dismiss {
+  float: right;
+  width: 22px;
+  min-height: 22px;
+  margin: -2px -4px 0 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  opacity: .5;
+}
+button.warn-dismiss:hover { border: 0; background: rgba(0, 0, 0, .07); opacity: 1; }
+button.warn-dismiss:active { transform: none; }
+.warn-more { margin-top: 4px; font-size: 11px; opacity: .7; }
 .empty-state { display: grid; min-height: 120px; place-content: center; gap: 4px; padding: 16px; border: 1px dashed var(--line-strong); border-radius: 9px; color: var(--dim); text-align: center; }
 .empty-state b { color: var(--ink); }
 .empty-state span { max-width: 220px; font-size: 11px; }

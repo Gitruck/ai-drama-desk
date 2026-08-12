@@ -345,3 +345,14 @@ export function wanFrames(durationSec: number, fps: number): number {
   const n = Math.max(1, Math.round((raw - 1) / 4));
   return n * 4 + 1;
 }
+
+/**
+ * MiniMax H3 帧数量化：固定 24fps，向上吸附到 17k+5 栅格（5/22/…/124/…/362）。
+ * 不在栅格上的长度模型不认。官方训练区间约 124–362 帧（5.2–15.1 秒），
+ * 低于 124 属外推、高于 362 未训练，这里按模型节点上限做硬夹。
+ */
+export function h3Frames(durationSec: number): number {
+  const raw = Math.max(5, Math.round(durationSec * 24));
+  const snapped = raw + (((5 - (raw % 17)) % 17) + 17) % 17;
+  return Math.min(snapped, 362);
+}

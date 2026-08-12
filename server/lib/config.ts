@@ -30,7 +30,7 @@ export function ensureDirs() {
  * 尊重用户配置、不注入默认节点映射，避免把默认 node id 塞进结构不同的自定义图。
  */
 export function mergeComfyConfig(
-  key: "comfyImage" | "comfyImage2" | "comfyVideo" | "comfyVideoHunyuan",
+  key: "comfyImage" | "comfyImage2" | "comfyVideo" | "comfyVideoHunyuan" | "comfyVideoH3",
   raw: Record<string, any>,
 ): StudioConfig[typeof key] {
   const rawCfg = raw[key];
@@ -57,6 +57,7 @@ export function loadConfig(): StudioConfig {
     comfyImage2: mergeComfyConfig("comfyImage2", raw),
     comfyVideo: mergeComfyConfig("comfyVideo", raw),
     comfyVideoHunyuan: mergeComfyConfig("comfyVideoHunyuan", raw),
+    comfyVideoH3: mergeComfyConfig("comfyVideoH3", raw),
   };
 }
 

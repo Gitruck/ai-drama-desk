@@ -5,6 +5,7 @@
     "falKey：fal.ai 的 API Key（云端视频出口 fal-video）；留空则该出口不可用。",
     "arkApiKey：火山方舟 API Key（Seedream 图像出口 seedream-image）；留空则该出口不可用。",
     "comfyImage2.promptPrefix 是风格 LoRA 触发词示例，换成你自己训练/下载的 LoRA 触发词。",
+    "exportKeepAudio：导出回轨包时是否保留片段自带音轨，默认 false（剥离）。H3 出片必带原生立体声、关不掉，垫在口播下会叠声；剥离走 ffmpeg 流拷贝不重编码，改这个开关重导即可，无需重新出片。",
     "以 _ 开头的键仅作注释，多余键不影响加载。"
   ],
   "port": 7799,
@@ -66,6 +67,17 @@
       "frames": { "id": "78", "field": "length" }
     }
   },
+  "comfyVideoH3": {
+    "template": "minimax-h3-i2v-4step.json",
+    "nodeMap": {
+      "prompt": { "id": "5", "field": "prompt" },
+      "startImage": { "id": "80", "field": "image" },
+      "seed": { "id": "7", "field": "noise_seed" },
+      "width": { "id": "5", "field": "width" },
+      "height": { "id": "5", "field": "height" },
+      "frames": { "id": "5", "field": "length" }
+    }
+  },
   "falVideoModel": "fal-ai/wan/v2.2-a14b/image-to-video",
   "seedreamModel": "doubao-seedream-5-0-pro-260628",
   "seedreamSize": "1664x928",
@@ -85,10 +97,12 @@
     "comfyui-image2": 0,
     "comfyui-video": 0,
     "hunyuan-video": 0,
+    "h3-video": 0,
     "fal-video": 0.7,
     "seedream-image": 0.3,
     "mock-image": 0,
     "mock-video": 0
   },
-  "defaultShotSec": 5
+  "defaultShotSec": 5,
+  "exportKeepAudio": false
 }

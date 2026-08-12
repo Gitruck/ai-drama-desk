@@ -211,6 +211,8 @@ export interface StudioConfig {
   comfyVideo?: ComfyWorkflowConfig;
   /** 混元 1.5 I2V 视频模板槽（480p 步数蒸馏），与 Wan 做对比 */
   comfyVideoHunyuan?: ComfyWorkflowConfig;
+  /** MiniMax H3 I2V 视频模板槽（4 步 Turbo，出片自带原生 32kHz 立体声） */
+  comfyVideoH3?: ComfyWorkflowConfig;
   falKey?: string;
   /** 火山方舟 API Key（Seedream 图像出口） */
   arkApiKey?: string;
@@ -232,6 +234,13 @@ export interface StudioConfig {
   prices: Record<string, number>;
   /** 单镜默认视频秒数兜底（分镜稿无建议秒数时） */
   defaultShotSec: number;
+  /**
+   * 导出回轨包时是否保留片段自带音轨。默认 false（剥离）。
+   * H3 出片必带原生立体声（音频与画面在同一次去噪里联合生成，关不掉），
+   * 垫在口播下面会叠声；剥离走 ffmpeg 流拷贝，不重编码、不动画面。
+   * 生成阶段永远保留音轨，改这个开关无需重新出片，重导即可。
+   */
+  exportKeepAudio: boolean;
 }
 
 export const DEFAULT_CONFIG: StudioConfig = {
@@ -284,6 +293,19 @@ export const DEFAULT_CONFIG: StudioConfig = {
       frames: { id: "78", field: "length" },
     },
   },
+  // H3 权重本身经 CFG 蒸馏、无负分支（走 BasicGuider 而非 CFGGuider），故不映射 negative。
+  // 分辨率跟随 videoWidth/videoHeight（须为 32 的倍数）；帧率固定 24，由模板写死。
+  comfyVideoH3: {
+    template: "minimax-h3-i2v-4step.json",
+    nodeMap: {
+      prompt: { id: "5", field: "prompt" },
+      startImage: { id: "80", field: "image" },
+      seed: { id: "7", field: "noise_seed" },
+      width: { id: "5", field: "width" },
+      height: { id: "5", field: "height" },
+      frames: { id: "5", field: "length" },
+    },
+  },
   falVideoModel: "fal-ai/wan/v2.2-a14b/image-to-video",
   seedreamModel: "doubao-seedream-5-0-pro-260628",
   seedreamSize: "1664x928",
@@ -303,10 +325,12 @@ export const DEFAULT_CONFIG: StudioConfig = {
     "comfyui-image2": 0,
     "comfyui-video": 0,
     "hunyuan-video": 0,
+    "h3-video": 0,
     "fal-video": 0.7,
     "seedream-image": 0.3,
     "mock-image": 0,
     "mock-video": 0,
   },
   defaultShotSec: 5,
+  exportKeepAudio: false,
 };

@@ -14,6 +14,7 @@ const KF_PROVIDERS = [
 ];
 const VID_PROVIDERS = [
   { id: "comfyui-video", label: "本地 Wan2.2（540p 抽卡档）" },
+  { id: "h3-video", label: "本地 MiniMax H3（4 步 Turbo · 带音轨）" },
   { id: "hunyuan-video", label: "本地 混元1.5（480p 蒸馏）" },
   { id: "fal-video", label: "fal 云出口（Wan2.2）" },
   { id: "mock-video", label: "mock（离线占位）" },
@@ -288,6 +289,15 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
     return () => clearInterval(timer.current);
   }, [refresh]);
 
+  // 关掉横幅 = 清掉这些已结束任务的记录（服务端只清 done/error，在跑的不受影响）
+  const dismiss = useCallback(
+    async (ids: string[]) => {
+      await api.dismissJobs({ project: id, ids });
+      setJobs(await api.jobs(id));
+    },
+    [id],
+  );
+
   const active = useMemo(() => jobs.filter((j) => j.status === "queued" || j.status === "running"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "error"), [jobs]);
   // 参考预算裁减等非致命告警（如角色超预算被裁）：成功任务也要浮出来，不静默
@@ -370,20 +380,40 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
       )}
       {failed.length > 0 && (
         <div className="warn bad">
+          <button
+            type="button"
+            className="warn-dismiss"
+            title="知道了，清掉这些失败记录"
+            aria-label="关闭失败提示"
+            onClick={() => dismiss(failed.map((j) => j.id))}
+          >
+            ✕
+          </button>
           {failed.slice(-3).map((j) => (
             <div key={j.id}>
               s{j.shotIndex} {j.kind} 失败：{j.error}
             </div>
           ))}
+          {failed.length > 3 && <div className="warn-more">另有 {failed.length - 3} 条更早的失败</div>}
         </div>
       )}
       {warned.length > 0 && (
         <div className="warn">
+          <button
+            type="button"
+            className="warn-dismiss"
+            title="知道了，清掉这些告警"
+            aria-label="关闭告警提示"
+            onClick={() => dismiss(warned.map((j) => j.id))}
+          >
+            ✕
+          </button>
           {warned.slice(-3).map((j) => (
             <div key={j.id}>
               s{j.shotIndex} {j.kind === "keyframe" ? "图" : "片"} 告警：{(j.warnings ?? []).join("；")}
             </div>
           ))}
+          {warned.length > 3 && <div className="warn-more">另有 {warned.length - 3} 条更早的告警</div>}
         </div>
       )}
 

@@ -400,6 +400,7 @@ export async function diagnoseComfy(config: StudioConfig, fetcher: typeof fetch 
     ["comfyui-image2", config.comfyImage2],
     ["comfyui-video", config.comfyVideo],
     ["hunyuan-video", config.comfyVideoHunyuan],
+    ["h3-video", config.comfyVideoH3],
   ];
   const providers = Object.fromEntries(configs.map(([id, wf]) => [id, providerDiagnostic(id, wf, service, runtime, objects, checkedAt)]));
   return { checkedAt, comfyUrl: safeComfyUrl(config.comfyUrl), service, runtime: info, queue, providers };

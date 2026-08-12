@@ -43,6 +43,8 @@ export const api = {
     req(`/api/v1/projects/${id}/auto`, { method: "POST", body: JSON.stringify({ keyframeProvider, videoProvider }) }),
   exportProject: (id: string) => req(`/api/v1/projects/${id}/export`, { method: "POST" }),
   jobs: (project?: string) => req(`/api/v1/jobs${project ? `?project=${project}` : ""}`),
+  dismissJobs: (body: { project?: string; ids?: string[] }) =>
+    req("/api/v1/jobs/dismiss", { method: "POST", body: JSON.stringify(body) }),
   loraJobs: () => req("/api/v1/lora/jobs"),
   loraJob: (id: string) => req(`/api/v1/lora/jobs/${id}`),
   validateLora: (body: any) => req("/api/v1/lora/validate", { method: "POST", body: JSON.stringify(body) }),

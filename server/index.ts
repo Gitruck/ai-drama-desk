@@ -29,7 +29,7 @@ import {
   StyleError,
   styleUsage,
 } from "./lib/styles.ts";
-import { enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
+import { dismissJobs, enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
 import { exportProject } from "./lib/export.ts";
 import { diagnoseComfy } from "./lib/providers/comfyui.ts";
 import { deleteMediaOutput, MediaDeleteError, previewMediaDelete } from "./lib/media.ts";
@@ -203,6 +203,7 @@ export function createRequestHandler() {
             "comfyui-image2": diagnostic.providers["comfyui-image2"].ready,
             "comfyui-video": diagnostic.providers["comfyui-video"].ready,
             "hunyuan-video": diagnostic.providers["hunyuan-video"].ready,
+            "h3-video": diagnostic.providers["h3-video"].ready,
             "seedream-image": !!c.arkApiKey,
             "fal-video": !!c.falKey,
             "mock-image": true,
@@ -456,11 +457,19 @@ export function createRequestHandler() {
       if (m && req.method === "POST") {
         const p = getProject(m[1]);
         if (!p) return err("项目不存在", 404);
-        return json(exportProject(p));
+        return json(exportProject(p, { keepAudio: loadConfig().exportKeepAudio }));
       }
 
       if (path === "/api/jobs") {
         return json(listJobs(url.searchParams.get("project") ?? undefined));
+      }
+
+      // 清掉已结束任务记录（失败/告警横幅据此渲染）。只清 done/error，在跑的不动。
+      if (path === "/api/jobs/dismiss" && req.method === "POST") {
+        const body = await req.json().catch(() => ({}) as any); // 全清时可以不带 body
+        const ids = Array.isArray(body?.ids) ? body.ids.filter((x: unknown) => typeof x === "string") : undefined;
+        const projectId = typeof body?.project === "string" ? body.project : undefined;
+        return json({ ok: true, removed: dismissJobs({ projectId, ids }) });
       }
 
       if (path.startsWith("/api/")) return err("API endpoint not found", 404);

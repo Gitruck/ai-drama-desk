@@ -40,9 +40,9 @@
 | 🎭 | 角色参考图 | 每角色上传设定原图；本地引擎走「单人单图集」（裁剪画布拖框裁主参考），多图引擎走「多图直喂集」（勾选墙 + 预算分配） |
 | 🧑‍🎨 | 人设图生成 | 工作台内直出角色参考图：`single` 单人立绘 / `turnaround` 三视图设定表；现成开源模型零前置兜底（无画风/锚图/LoRA 也能出），产物即刻进双参考集 |
 | 🖼️ | Keyframe 出图 | 每镜出首帧，单卡重 roll、点击选用；引擎可选本地 ComfyUI（参考图档 / LoRA 档）、云端、mock |
-| 🎞️ | I2V 出片 | 选中 keyframe → 图生视频；本地 ComfyUI 540p 抽卡档 / 480p 蒸馏档，或云端出口 |
+| 🎞️ | I2V 出片 | 选中 keyframe → 图生视频；本地 ComfyUI 540p 抽卡档 / H3 带音轨档 / 480p 蒸馏档，或云端出口 |
 | 🤖 | 全自动补齐 | 缺啥补啥：无图先出图再接力出片；本地 GPU 车道串行、云车道小并发 |
-| 📦 | 导出回轨包 | `<slug>-<beatId>-s<n>.mp4` + manifest（ffprobe 实测时长 vs 建议秒数差值、成本台账），拖回任意 NLE 对齐 |
+| 📦 | 导出回轨包 | `<slug>-<beatId>-s<n>.mp4` + manifest（ffprobe 实测时长 vs 建议秒数差值、音轨状态、成本台账），拖回任意 NLE 对齐 |
 | 🎨 | 画风资产 | 画风档案建/改/删、风格包导入导出、LoRA 绑定；CLI `style` 子命令同能力 |
 | 🧪 | LoRA 训练 | 提交前检查 → 后台训练 → checkpoint 恢复 → 发布绑定到画风；CLI `lora` 子命令同能力 |
 | 🩺 | ComfyUI 诊断 | service / runtime / workflow / nodes / models 五层只读诊断，缺什么、放哪里逐条点名 |
@@ -79,9 +79,53 @@ bun run cli -- health --json
 git clone https://github.com/comfyanonymous/ComfyUI.git
 cd ComfyUI
 python -m venv venv           # 建议独立 venv（或用官方推荐的安装方式）
-# 激活 venv 后按官方 README 安装依赖（含对应 CUDA 的 PyTorch）
+# 激活 venv 后，先按下方「PyTorch 的 CUDA 构建」装好 torch，再装 ComfyUI 依赖
+pip install -r requirements.txt
 python main.py                # 默认监听 127.0.0.1:8188
 ```
+
+#### ⚠️ PyTorch 的 CUDA 构建：装错不报错，只是悄悄变慢
+
+下表的权重全是 **fp8_scaled / 量化档**。ComfyUI 用 comfy-kitchen 的优化 CUDA 算子跑这类权重，而它有一道硬门槛——`comfy/quant_ops.py` 里判 `torch.version.cuda < 13` 就**直接关掉整个 CUDA 后端**，只打一行 warning，然后静默降级到 eager 反量化路径：
+
+```python
+if cuda_version < (13,):
+    ck.registry.disable("cuda")
+    logging.warning("WARNING: You need pytorch with cu130 or higher to use optimized CUDA operations.")
+```
+
+**不报错、能出图、只是慢**，所以极易被忽略。RTX 4090（sm_89）上实测 4096³ linear 三条路径：优化 CUDA kernel 0.32 ms、纯 bf16 0.84 ms、eager 回退 **1.81 ms**——也就是说 CUDA 构建装错时，量化权重比根本不量化还慢一倍多。20 系及以上显卡都受影响。
+
+装 PyTorch 时显式指定 cu130（或更高）的索引：
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu130 torch torchvision torchaudio
+```
+
+装完自检两条：
+
+```bash
+python -c "import torch; print(torch.version.cuda)"   # 应为 13.x，不是 12.x
+python main.py                                        # 启动日志应出现 Found comfy_kitchen backend cuda: ...
+                                                      # 且不应出现上面那句 cu130 warning
+```
+
+> 驱动只要满足 CUDA 13 的最低版本即可，**不需要**为此重装显卡驱动。若因故只能停在 cu12x，就改用非量化或 `fp8_scaled` 以外的权重档，别在 cu12x 上跑量化档白白挨慢。
+
+#### 模型目录放哪
+
+模型走分层加载，权重读取在出片热路径上。**放本机 NVMe，别放机械盘、更别放 SMB/NFS 网络盘**（网络延迟会把逐层换页拖成不可用）。若系统盘空间不够，用 ComfyUI 根目录的 `extra_model_paths.yaml`（从 `.example` 复制改名）把 `models/` 指到另一块本地盘：
+
+```yaml
+mypaths:
+  base_path: F:/ai-models/comfyui
+  diffusion_models: diffusion_models/
+  text_encoders: text_encoders/
+  vae: vae/
+  loras: loras/
+```
+
+它是 **append 不是替换**——原有 `models/` 下的文件照常可见，两处内容合并进同一个下拉。
 
 工作台「设置」页的 ComfyUI 诊断会分层报告缺什么（插件节点 / 模型文件），按提示补齐即可。ComfyUI 未装或未启动时状态栏显示离线，不影响 mock / 云端出口。
 
@@ -114,6 +158,22 @@ python main.py                # 默认监听 127.0.0.1:8188
 | `wan2.2_i2v_lightning_low_noise.safetensors` | `models/loras` | Wan2.2-Lightning 4 步蒸馏 LoRA（低噪，社区加速版、许可自查） |
 | `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | `models/text_encoders` | UMT5-XXL 文本编码器 fp8 |
 | `wan_2.1_vae.safetensors` | `models/vae` | Wan 2.1 VAE（2.2 沿用） |
+
+**I2V 出片 · MiniMax H3 4 步 Turbo（`minimax-h3-i2v-4step.json`）**
+
+> 需 **ComfyUI ≥ 0.30.0**（H3 原生节点自该版起提供）。前四个文件来自 `Comfy-Org/MiniMax-H3`，Turbo LoRA 来自 `joyfox/MiniMax-H3-Turbo`。
+> **底模选 pruned 档时 LoRA 必须配套**：剪枝版把时间条件层换成了 8 维曲线基（`adaln_proj [96768, 8]`），而多数 Turbo LoRA 是按非剪枝的 2688 维训练的，形状对不上会被 ComfyUI 静默跳过（只打 `WARNING SHAPE MISMATCH`，照常出片但没有加速效果）。下表这个是在剪枝底模上原生蒸馏的。
+> **地域提示**：H3 权重受 MiniMax H3 Community License 约束，排除欧盟 / 英国 / 韩国 / 美国；年营收超 2000 万美元需另行书面授权；商用产品界面须显著展示 "MiniMax H3" 字样。下载使用前请自行确认适用性。
+
+| 权重文件 | 落位子目录 | 说明 |
+|---|---|---|
+| `minimax_h3_fl2va_pruned_int8_convrot.safetensors` | `models/diffusion_models` | H3-Base FL2VA 剪枝 int8（约 19.5 GiB）。**需 PyTorch cu130**，否则退回 eager 反而更慢，见上文 |
+| `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `models/text_encoders` | Qwen3-VL-32B 文本编码器 NVFP4（约 14.6 GiB）。sm_89 无原生 fp4 但可用，走软件反量化，整层开销约 +8% |
+| `minimax_h3_video_vae_fp16.safetensors` | `models/vae` | H3 视频 VAE |
+| `minimax_h3_audio_vae_fp32.safetensors` | `models/vae` | H3 音频 VAE。**缺它就没有音轨** |
+| `minimax_h3_fl2va_4step_lora.safetensors` | `models/loras` | 4 步 Turbo LoRA（在剪枝底模上原生蒸馏）。不想要加速就把模板里的 `LoraLoaderModelOnly` 摘掉、步数改回 20、采样器换 `res_multistep` |
+
+> **音轨关不掉，但导出可以剥。** H3 的视频与音频 latent 打包在同一个 `NestedTensor` 里联合去噪，节点上没有关音频的入参——出片必带原生 32kHz 立体声。垫在口播下面会叠声，所以导出回轨包时**默认剥离**（配置项 `exportKeepAudio`，默认 `false`）。剥离走 ffmpeg 流拷贝，不重编码、视频流逐字节不变；项目候选里的原片仍带音轨，改开关重导即可找回，不必重新出片。manifest 会逐条标注音轨状态（`有` / `已剥离` / `无`）。
 
 **I2V 出片 · HunyuanVideo 1.5 480p 蒸馏档（`hunyuan15-i2v-480p.json`）**
 
@@ -205,6 +265,7 @@ python main.py                # 默认监听 127.0.0.1:8188
 | `comfyui-image2`（B 档） | 出图 | 本地 ComfyUI + 画风 LoRA | 画风由 LoRA 承担，需当前画风绑定 LoRA manifest |
 | `seedream-image` | 出图 | `arkApiKey` | 火山方舟 Seedream，多图直喂（预算 10 张） |
 | `comfyui-video` | 出片 | 本地 ComfyUI | Wan2.2 I2V 540p 抽卡档 |
+| `h3-video` | 出片 | 本地 ComfyUI ≥0.30 | MiniMax H3 I2V，4 步 Turbo；**出片自带原生 32kHz 立体声**，固定 24fps |
 | `hunyuan-video` | 出片 | 本地 ComfyUI | HunyuanVideo 1.5 480p 步数蒸馏档 |
 | `fal-video` | 出片 | `falKey` | fal.ai Wan2.2 A14B I2V，高动作镜头或赶工 |
 

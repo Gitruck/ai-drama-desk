@@ -122,7 +122,8 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 
 **引擎取值（provider）**：出图 `mock-image` / `comfyui-image`（A 档参考图）/ `comfyui-image2`（B 档
 LoRA，画风须绑定 manifest）/ `seedream-image`（需 `arkApiKey`）；出片 `mock-video` / `comfyui-video`
-（Wan2.2 540p）/ `hunyuan-video`（HunyuanVideo 1.5 480p 蒸馏）/ `fal-video`（需 `falKey`）。
+（Wan2.2 540p）/ `h3-video`（MiniMax H3 4 步 Turbo，出片带原生立体声、固定 24fps）/
+`hunyuan-video`（HunyuanVideo 1.5 480p 蒸馏）/ `fal-video`（需 `falKey`）。
 本地车道串行、云车道小并发、LoRA 训练与本地生成共享 GPU 租约（训练在跑时本地生成排队）。
 
 ---
