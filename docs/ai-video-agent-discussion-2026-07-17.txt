@@ -1,0 +1,628 @@
+有关AI视频Agent导演框架的讨论
+问题
+先和你说一下我的需求：我在做一些人文社科历史类的科普视频（中长视频），其中有一些文段需要以ai漫剧的形式演绎，我试了一下市面上比较前沿的ai视频工具（即梦、libtv、magiclight、pixverse）各有各的流程，唯一的共同点就是太贵了。但是本地其实都有图片和视频的生成模型，我测了wan2.2 混元 ltx2.0 都是好东西，就是缺一个有导演思维的指挥家（agent/skill），当然我也可以慢慢通过文本手搓人物参考图、然后生成每个分镜的参考图、接着各种生成的视频，耗时不说，我自己也没有足够的导演思维，这就会导致我想要的一组画面组合起来非常奇怪……所以我的理解是这些平台的之所以敢卖那么贵，其实很大一部分原因就是知道这个导演的agent会卡脖子，但是作为资深开发，我总觉得应该会有开源的一套组件去解决这个问题（skill+节点画布+视频推理加速），你看看有没有什么现成的解决方案？
+AI回复
+你的判断基本成立，但平台真正卖得贵的并不只是一个“会写分镜提示词的导演 Agent”，而是下面这一整套东西：导演规划 + 角色/场景资产管理 + 镜头连续性 + 模型路由 + 自动质检重试 + 可回退的工程状态 + 剪辑合成。截至 2026 年 7 月，开源社区已经有不少组件，但还没有一个项目能同时做到：完全本地、导演能力成熟、可视化节点画布、兼容 Wan/混元/LTX、稳定生产中长视频。不过，已经可以拼出一套相当接近即梦、MagicLight 这类平台的本地系统。
+
+点击图片可查看完整电子表格
+1.1 VideoClaw：最值得直接 fork
+它基本就是你描述的产品：
+创意/文段 → 剧本 → 角色与场景 → 分镜 → 参考图 → 视频片段 → 后期合成
+每个阶段的资产都能查看、修改和重新生成，而且已经支持首帧生视频、首尾帧生视频、参考图生视频，以及 WebUI、项目留存和 OpenClaw Skill。项目采用 MIT 许可证。
+问题在于，它目前内置的模型 Provider 主要是 DashScope、火山方舟、Kling、OpenAI、Gemini 等商业接口，Wan 也是通过云端 DashScope 调用，并没有直接接本地 ComfyUI。
+但这反而很适合你。 它的导演工作流、资产结构、前后端界面已经有了，你只需要实现：
+Plain TextComfyUIImageProviderComfyUIVideoProviderLocalVLMProviderLocalLLMProvider
+然后把云端的 generate_image()、generate_video() 替换成提交 ComfyUI workflow JSON 即可。
+
+1.2 creative-skills：本地生成层最好的参考实现
+这个项目已经把 Agent Skill 和本地 ComfyUI 真正连起来了：
+ Agent 生成 YAML 分镜工程 
+ Flux 生成场景锚点图 
+ LTX 进行图生视频、首尾帧、续写、多参考帧生成 
+ 支持不同场景之间的过渡片段 
+ FFmpeg 自动合成 
+ 支持任务恢复、单镜头重跑和质量检查 
+ 可以把图片服务器和视频服务器分开部署 
+它甚至已经考虑到一个常见坑：不能直接拿人物设定图当视频首帧，而应该先生成“人物已经置于具体场景中的镜头锚点”，否则人物设定图的背景和灯光会污染所有镜头。
+这套东西非常适合被拆下来，作为 VideoClaw 的本地 ComfyUI Provider。
+它的弱点也很明显：目前偏向音乐视频和对白漫剧，主要通过 YAML 和命令行驱动，没有真正成熟的导演工作台。
+
+1.3 AI Storyboard Generator：最容易跑通的本地原型
+这个项目是 React 前端，支持：
+ OpenAI-Compatible LLM 
+ 自定义 ComfyUI 图片工作流 
+ 自定义 ComfyUI 视频工作流 
+ 配置 workflow 中首帧、尾帧、Prompt、视频输出节点 ID 
+ 单镜头重生成 
+ 批量生成 
+ FFmpeg 合并 
+ 项目 ZIP 保存与恢复 
+也就是说，它已经完成了最麻烦的“前端分镜卡片 ↔ ComfyUI JSON workflow”连接。
+但它的导演能力更像“把文本拆成 N 个画面”，并没有真正处理：
+ 景别节奏 
+ 轴线和人物空间关系 
+ 镜头之间的信息递进 
+ 场面调度 
+ 角色出入场 
+ 视觉母题 
+ 叙事视角 
+适合拿来验证本地生成链路，不适合直接当最终导演系统。
+
+1.4 ViMax：最值得抄“导演脑”的项目
+ViMax 的设计很接近真正的导演 Agent：
+ 长文本 RAG 拆分 
+ 场景和镜头规划 
+ 多机位模拟 
+ 智能选择前序参考图 
+ 多张候选图并行生成 
+ 使用 VLM 对人物一致性和构图进行检查 
+ 自动选择最佳首帧 
+ 失败重试和状态恢复 
+它不是只生成一次，而是有明显的“生成—检查—选择”闭环。
+缺点是当前示例仍然主要接 OpenRouter、Google 图像和 Veo 等 API，而且 Web 前端还在 Roadmap 中。
+所以它适合作为 VideoClaw 导演层和质检层的参考实现，不适合直接作为底座。
+
+1.5 Story2Board：可以补强分镜图质量
+Story2Board 专门解决一个很重要的问题：
+保持人物身份一致的同时，不能让所有分镜都变成人物站在画面中央的相似构图。
+它通过共享参考 latent 和跨面板 attention 混合，在不训练模型的情况下兼顾人物一致性、背景变化和构图多样性，底层使用 FLUX.1-dev。
+它不负责视频，但可以成为你的“分镜参考图生成器”，或者把它的方法移植到 ComfyUI workflow 中。
+我认为最现实的组合
+Plain Text                    ┌─────────────────────────┐文段 / 旁白 / 史料 ──►  Director Agent          │                    │  剧情节拍、镜头关系、节奏 │                    └────────────┬────────────┘                                 │                    ┌────────────▼────────────┐                    │ Production Bible         │                    │ 人物、服装、年代、场景、 │                    │ 道具、空间、视觉风格     │                    └────────────┬────────────┘                                 │              ┌──────────────────▼──────────────────┐              │ VideoClaw / 自研 React Flow 工作台   │              │ 场景节点 → 镜头节点 → 资产节点       │              └──────────────────┬──────────────────┘                                 │                ┌────────────────▼────────────────┐                │ ComfyUI Workflow Provider        │                │ 图像：Flux / Qwen Image          │                │ 视频：Wan / Hunyuan / LTX        │                └────────────────┬────────────────┘                                 │                  ┌──────────────▼──────────────┐                  │ VLM Continuity Reviewer      │                  │ 人物 / 时代 / 构图 / 连贯性  │                  └──────────────┬──────────────┘                                 │                       重试 / 选优 / 人工确认                                 │                  ┌──────────────▼──────────────┐                  │ FFmpeg / 你的剪辑工程系统    │                  └─────────────────────────────┘
+具体来说：
+产品壳和工程状态机：VideoClaw
+本地 ComfyUI 调用：creative-skills + AI Storyboard Generator
+导演规划与质检逻辑：ViMax
+分镜一致性与构图：Story2Board
+推理执行：ComfyUI / WanGP / LightX2V
+最终装配：FFmpeg 或你自己的剪辑工程
+ComfyUI 本身已经原生支持 Wan 2.2、Hunyuan Video、LTX-Video，并提供 API、工作流 JSON、异步队列和局部重执行，适合成为隐藏在产品界面后面的“生成引擎”。
+推理加速怎么选
+单机、显存有限：WanGP
+WanGP 已经支持 Wan、LTX、混元等多个模型，提供量化模型、低显存运行、队列、Headless 模式和 API，很适合快速接进 Agent。
+新卡、高吞吐：LightX2V
+LightX2V 更像生产推理框架，支持单卡和多卡优化、量化、蒸馏及分布式部署。官方甚至提供了针对特定 Wan 2.2、RTX 5090 和 NVFP4 的极端加速版本，但那种“50 倍”是特定模型、硬件和蒸馏配置，不能理解成所有视频模型都会获得同样收益。
+多张异构显卡：优先镜头级并行
+考虑到你之前的服务器里还有 Tesla M40 一类老卡，我不建议第一阶段做“一个镜头跨多张卡切分”。
+更合理的是：
+Plain TextGPU 0：镜头 1GPU 1：镜头 2GPU 2：镜头 3GPU 3：分镜参考图 / VLM 质检
+每个 Worker 设置不同的 CUDA_VISIBLE_DEVICES，通过 Redis 队列调度。对于中长视频，镜头之间本来就天然可并行，这通常比异构卡上的张量并行稳定得多。
+等换成同型号高端卡，再考虑 LightX2V 或 xDiT 的序列并行、PipeFusion 等多卡推理方案。xDiT 本身就是为大规模 DiT 并行推理设计的。
+SageAttention 官方目前主要针对 RTX 3090、4090 优化，其他架构不一定有明显收益，因此不太适合作为 M40 的核心加速方案。
+TeaCache 可以用于预览和候选生成，但 ComfyUI 插件曾频繁受到版本更新影响，并且阈值过激时会影响质量，最终出片最好保留一套不使用缓存加速的高质量配置。
+人文历史视频还需要额外补一层
+通用漫剧 Agent 最容易在历史题材上犯的错误不是“画面不美”，而是：
+ 不同朝代服饰混用 
+ 官职、礼仪、建筑错误 
+ 不存在的道具提前出现 
+ 同一地点空间结构不断变化 
+ 为了戏剧效果篡改史实关系 
+因此你需要在普通 Character Bible 之外，加一个：
+Plain Texthistorical_constraints:  period: 北宋中期  exact_year: 1043  location: 汴京  architecture:    allowed: [木构楼阁, 瓦顶, 坊市街道]    forbidden: [明清硬山顶风格, 现代玻璃, 清代官服]  costume_sources:    - 宋代画像参考    - 出土服饰资料  factual_certainties:    confirmed: [...]    disputed: [...]    dramatized: [...]
+导演 Agent 每次生成镜头时，都必须读取这份约束；VLM 质检也要增加“时代错误”和“史料冲突”评分。
+最终建议
+不要从零开发一个全新的导演 Agent，也不要直接使用 MovieAgent 这种论文项目。
+最省时间、最接近产品化的路线是：
+fork VideoClaw，增加本地 ComfyUI Provider；借用 creative-skills 的 ComfyUI 调用和多参考帧工作流；把 ViMax 的分镜规划、候选生成、VLM 选优机制移植进去。
+节点画布最好分成两层：
+ 面向创作者的是“场景—镜头—资产—成片”的制作画布； 
+ ComfyUI 节点图隐藏在每个生成节点内部。 
+不要把完整 ComfyUI 图直接暴露给普通创作者，否则最终仍然只是一个更复杂的本地工作流工具，而不是你真正需要的“AI 导演”。
+已有工作管线的产物
+PythonAI 再现分镜稿 · 父亲辅导作业的反问小剧场（beat B17）> **本稿只描述意图与时长。** 角色一致性依赖下游管线自带的角色资产/参考图机制（角色圣经/三视图在下游产品里生成）——喂给有角色资产库的平台保一致；喂裸文生视频 API 会逐镜漂脸，那是该管线短板、非本稿责任。出片、拼回时间线在你手里。> **画风版本**：「深海II」插画体系（2026-07-16 双轨分离后重产）。本段角色为本片新建（与 B19/B20 的病房线无关）。元信息区间总时长：track_st 294.965 → track_ed 331.835 ≈ 36.9 秒建议分镜数：6 镜（1 个蒙太奇段·「书桌旁」；单场景连续小剧场，不换场）复现角色：父亲（本片新建）、女儿（本片新建）叙事功能 / 情感阶段：question-reversal / tension-release（紧张—释放）（源自 handoff；beat 顶层 reversal-elevation，rhythm=渐升→停顿）目标平台：通用（缺省）——中文稿喂可灵 / 即梦 / Vidu / 通义，英文稿喂 Veo / Runway / LTX / Luma风格参考图（选 1–3 张随稿喂给支持参考图的平台）：主锚 `ref-04-浇花母女`（亲子桌前同构图基因）；学习场景可加 `ref-12-黑板师生`；暖调收束可加 `ref-11-教室三人`。图在风格资产 `real-roam-ai-drama-style/assets/refs/`时长预算定位：意图值，非精确交付；各镜之和 ≈37s 贴合区间，手动拼接对齐情绪弧（本段的画面机制）：紧张段 = 色温收冷（青灰暮色）+ 父亲的身影把画面留白一点点挤掉；释放段 = 女儿反问后暖金台灯光漫开、留白回来。唯一色点 = 作业本上那支红笔与红叉，红笔离场即张力解除======================================================================一、中文稿（喂可灵 / 即梦 / Vidu / 通义）======================================================================① 视觉基调（Style Lock）> 权威源，供各分镜前缀复述。来源：栏目 `real-roam-guide` → `real-roam-ai-drama-style`（深海II · 暮色收冷→暖金释放变体）手绘日系插画感动画画面，平涂加柔和过渡、干净勾线，绝非写实摄影。当代中国普通家庭的傍晚，书桌一角画成一面低饱和素色墙前的极简舞台：一张书桌、一盏台灯、摊开的作业本，背景细节永远少于人物，大量留白。全画面统一色温、如蒙柔光——本段情绪走「紧张—释放」：前半段色温收在闷闷的青灰暮色里，父亲俯身逼近的身影把画面的留白一点点挤掉；女儿反问之后，暖金的台灯光漫开，画面重新透气、留白回来。人物是普通人：家常针织衫的普通中年爸爸、圆脸的小学女儿，生动、不美型。全段唯一鲜彩色点 = 作业本上那支红笔与红叉（道具化，不做成环境色），末镜红笔放下离场、张力随之解除。镜头克制缓慢，固定或极缓推移。> 禁忌：写实真人感 / 伪电影感 / 照片质感 / 胶片颗粒模拟；黑白高反差 / 阴郁暗黑画面 / 纯黑背景 / chiaroscuro 强侧光；过饱和 / HDR / 霓虹；glossy 3D 渲染 / 塑料皮肤；通用二次元萌脸 / 大眼萌系；夸张洋相表情 / 龇牙咆哮（怒气靠姿态与节奏，不靠扭曲的脸）；大面积饱和色 / 多处彩色点；手持抖动 / 甩镜 / 无人机；画面文字 / 字幕（作业本上的字迹虚化处理，不可辨读）；畸形脸 / 多指 / 肢体错乱。② 故事背景描述当代中国普通家庭的一个傍晚，书桌一角。父亲在辅导小学阶段的女儿写作业，女儿反复错在同一道题上，父亲的火气一层层往上顶、声音越来越大。这不是一个关于对错的场景，而是一个关于「问题的方向决定情绪的走向」的场景：问「你为什么这么生气」，他会滔滔不绝给你理由、越想越气；而他的女儿问了另外一个问题——「爸爸，你是想让我更着急呢，还是想让我放松下来慢慢想？」父亲愣住了，马上放低声音说：我不生气了，你慢慢想。整段以手绘插画的素墙书桌呈现，色温从青灰暮色的紧绷转向暖金台灯光的松弛，留白先被挤压再被归还，质感如蒙柔光。③ 角色描述父亲（本片新建）35–42 岁的普通中年男性，短发利落、微微发福也可，眉头习惯性紧锁；家常深色针织衫或衬衫，袖子挽到小臂。插画感的「普通人」爸爸——生动、不美型、不做夸张洋相。本段神态两层：前半段是压抑不住的急躁——俯身逼近、手指戳题、比划着讲理由，怒气靠身体的前倾与节奏表达，不靠扭曲的脸；后半段是被击中后的松弛——比划的手停在半空、肩膀垮下来、声音放软。禁变项：不戴/摘眼镜切换、不换发型、不穿西装正装、不龇牙咆哮。质感落点：青灰暮色里一个把留白挤掉的深色身影，释放后退回画面一侧；唯一的红落在他手里那支批改红笔上，人身上不落彩色点。女儿（本片新建）8–10 岁女孩，齐耳短发或低马尾，圆脸，眼睛清澈（正常比例，不做萌系大眼）。家居棉质上衣。本段神态两层：前半段低头承受，握着铅笔的手停在原地；后半段缓缓抬头，眼神不是对抗而是平静的好奇——她的反问不带火气。禁变项：不卡通化、不哭闹、不切换发饰、年龄不漂移。质感落点：素墙前的一小团安静身影，抬头那一镜她的脸最先接到变暖的台灯光；身上不落彩色点。④ 分镜描述分镜 01 · 建立·台灯下的书桌 ｜建议 ≈5s ｜段：书桌旁 ｜场景：家中书桌 ｜角色：父亲、女儿 ｜对应原文：第 1–2 句〔手绘插画、素墙书桌、青灰暮色、留白尚在〕中景固定：素色墙前，台灯亮着，女儿低头写作业，父亲站在她身后俯看作业本；红色批改笔搁在本子一角，是画面唯一的一点鲜彩。暮色偏青灰、闷闷的，空气已经绷紧但还没爆发。镜头静止。分镜 02 · 怒气升级·手指戳向错处 ｜建议 ≈6s ｜段：书桌旁 ｜场景：家中书桌 ｜角色：父亲、女儿 ｜对应原文：第 2 句〔手绘插画、青灰收紧、父亲身影压近〕中近景：父亲的手指重重戳在作业本同一道错题上，红笔已在那里划下一个刺目的红叉；他俯身逼近，深色针织衫的身影把画面的留白挤掉一块，女儿的肩膀微微缩起。怒气靠前倾的姿态与戳的节奏，不靠扭曲的脸。镜头几乎不动，只随戳的动作有一次极轻的顿挫。分镜 03 · 滔滔理由 ｜建议 ≈6s ｜段：书桌旁 ｜场景：家中书桌 ｜角色：父亲 ｜对应原文：第 3–6 句〔手绘插画、青灰暮色、留白被挤到最少〕中景：父亲直起上身，侧对镜头，手比划着滔滔不绝——像在向一个画外的人陈述自己为什么有理由生气（「这道题我讲过三遍他还错」）。红笔随手势在空中划动，他的身影此刻占满画面一侧，留白降到全段最少。镜头固定，任他的表演占满声画。分镜 04 · 越想越气·原地打转 ｜建议 ≈5s ｜段：书桌旁 ｜场景：家中书桌 ｜角色：父亲 ｜对应原文：第 7 句〔手绘插画、青灰最闷的一镜〕近景：父亲讲完了理由却更气了——他在原地小幅度地来回半步、呼一口气又要开口，比划的手收不回来。「找原因」的回路在他身上打转。画面闷而满，暮色青灰压着。镜头极缓推近一点点。分镜 05 · 女儿抬头·平静反问 ｜建议 ≈7s ｜段：书桌旁 ｜场景：家中书桌 ｜角色：女儿（父亲虚在前景） ｜对应原文：第 8–10 句〔手绘插画、转折支点、台灯光开始转暖〕过肩镜头（越过父亲肩头）转到女儿：她缓缓抬头，眼神平静不带对抗，开口问出那句反问——「是想让我更着急，还是想让我放松下来慢慢想？」她的脸最先接到台灯变暖的那一层光，画面在她周围重新透出一小片留白。节奏在此从「渐升」切到「停顿」。镜头极缓向女儿推近一点点。分镜 06 · 愣住·放软·红笔离场 ｜建议 ≈8s ｜段：书桌旁 ｜场景：家中书桌 ｜角色：父亲、女儿 ｜对应原文：第 11–12 句〔手绘插画、暖金台灯光漫开、留白回来〕中景收束：父亲僵住，比划的手停在半空——然后肩膀垮下来，把红笔轻轻放回桌角、红色移出视线焦点，声音放软说出「我不生气了，你慢慢想」。暖金的台灯光漫过书桌和两人，画面重新变得透气，留白回来了。父女之间的空气松开。镜头极缓微微拉远，收在一个呼吸感的停顿上，末尾轻淡出。⑤ 原文文稿（本区间口播原文，不翻译）举一个真实的例子有一个爸爸辅导女儿写作业看到女儿反复犯同一个错误火气一下就上来了声音越来越大这时候如果有人问他你为什么这么生气他会滔滔不绝地给你理由这道题我讲过三遍他还错你说气不气人问为什么生气激活的是他大脑里寻找原因的回路他只会越想越气但他的女儿问了另外一个问题她说爸爸你是想让我更着急呢还是想让我放松下来慢慢想这个爸爸愣住了他马上放低了声音说我不生气了你慢慢想======================================================================二、English Storyboard (for Veo / Runway / LTX / Luma)======================================================================① Visual Tone (Style Lock)> Authoritative source; restated as a prefix in every shot. Source: column `real-roam-guide` → `real-roam-ai-drama-style` ("Shenhai II" · dusk-cool-to-warm-gold release variant)Hand-drawn Japanese-illustration-style animation: flat colors with soft gradients and clean linework — never photorealistic, never live-action film look. An ordinary contemporary Chinese home at dusk, one desk corner rendered as a minimal stage before a plain muted wall: a desk, a lamp, an open homework sheet; background detail always sparser than the figures, generous negative space. One unified color temperature under a soft filter — this passage runs tension-to-release: the first half sits in a stuffy cool gray-teal dusk, the father's looming figure squeezing the frame's negative space away; after the daughter's counter-question, warm golden lamplight blooms, the frame breathes again and the emptiness returns. Characters are ordinary people: an ordinary middle-aged dad in a home-worn knit sweater, a round-faced elementary-school daughter — vivid, never idealized. The passage's only saturated accent is the red marking pen and its red cross on the homework sheet (a prop, never ambient color); in the final shot the red pen is set down and exits the focus, and the tension dissolves with it. Camera restrained and slow: locked or gently drifting.> Avoid: photorealistic / live-action / cinematic film look / photo texture / film-grain simulation; black-and-white / high contrast / gloomy dark frame / pure black background / hard chiaroscuro; oversaturated / HDR / neon; glossy 3D render / plastic skin; generic AI anime cute face / big sparkling eyes; exaggerated grimace / bared-teeth yelling (anger lives in posture and rhythm, not a twisted face); large saturated areas / multiple color accents; handheld shake / whip pan / drone; text / captions / subtitles (handwriting on the homework sheet stays blurred, illegible); deformed face / extra fingers / mutated limbs.② BackgroundAn evening in an ordinary contemporary Chinese home, one corner of a desk. A father is helping his elementary-school daughter with homework; she keeps making the same mistake, and his anger ratchets up layer by layer, his voice growing louder. This is not a scene about right and wrong but about "the direction of a question deciding the direction of emotion": ask him "why are you so angry" and he will pour out reasons and grow angrier still; his daughter asks a different question — "Dad, do you want me more anxious, or do you want me to relax and think it through?" The father freezes, then lowers his voice at once: "I'm not angry anymore — take your time." The whole passage is rendered as hand-drawn illustration at a plain-wall desk, the color temperature moving from taut cool gray-teal dusk to loosened warm golden lamplight, negative space first squeezed away and then returned, soft-filtered throughout.③ CharactersFather (new to this film)An ordinary middle-aged man, 35–42, crisp short hair, a little soft around the middle is fine, brow habitually knit; home-worn dark knit sweater or shirt, sleeves pushed to the forearm. An illustrated "ordinary dad" — vivid, never idealized, no cartoonish mugging. Two registers: the first half is barely-contained irritation — leaning in, jabbing a finger at the problem, gesturing through his reasons — the anger carried by the forward lean and the rhythm, never by a twisted face; the second half is the slackening of a man struck — his gesturing hand stalls mid-air, shoulders drop, voice softens. Do-not-change: no glasses on/off switching, no hairstyle change, no formal suit, no bared-teeth roaring. Texture note: a dark figure crowding out the frame's negative space in the cool dusk, receding to one side after the release; the only red belongs to the marking pen in his hand — no color accent on his body.Daughter (new to this film)A girl of 8–10, ear-length hair or a low ponytail, round face, clear eyes (normally proportioned — no cutesy big-eyes). Cotton home top. Two registers: the first half endures with her head down, pencil hand frozen in place; the second half lifts her head slowly, her gaze not defiant but calmly curious — her counter-question carries no heat. Do-not-change: no cartoonification, no crying tantrum, no hair-accessory changes, no age drift. Texture note: a small quiet figure before the muted wall; in the shot where she looks up, her face is the first to catch the lamplight turning warm; no color accent on her.④ ShotsShot 01 · Establishing · desk under the lamp ｜≈5s ｜segment: at the desk ｜scene: home desk ｜cast: father, daughter ｜source lines: 1–2〔hand-drawn illustration, plain-wall desk, cool gray-teal dusk, negative space still intact〕Locked medium shot: before the muted wall the lamp is on; the daughter writes with her head down, the father stands behind her peering at the homework sheet; the red marking pen rests at the sheet's corner — the frame's only saturated touch. The dusk is a stuffy cool gray-teal; the air is taut but has not broken. Camera still.Shot 02 · Anger rising · finger jabs the error ｜≈6s ｜segment: at the desk ｜scene: home desk ｜cast: father, daughter ｜source line: 2〔hand-drawn illustration, cool tones tightening, the father's figure pressing in〕Medium close-up: the father's finger jabs hard at the same wrong answer, where the red pen has already struck a stinging red cross; he leans in, his dark-sweater figure squeezing a block of negative space out of the frame, the daughter's shoulders shrinking slightly. The anger lives in the forward lean and the jabbing rhythm, not in a twisted face. The camera barely moves, only a faint hitch on the jab.Shot 03 · A torrent of reasons ｜≈6s ｜segment: at the desk ｜scene: home desk ｜cast: father ｜source lines: 3–6〔hand-drawn illustration, cool gray-teal dusk, negative space squeezed to its minimum〕Medium shot: the father straightens, in profile to camera, gesturing as he pours out reasons — as if explaining to someone off-frame why his anger is justified ("I've explained this problem three times"). The red pen slices the air with his gestures; his figure now crowds one whole side of the frame, the emptiness at its lowest in the passage. Camera locked, letting his performance fill the frame.Shot 04 · Angrier the more he thinks · circling in place ｜≈5s ｜segment: at the desk ｜scene: home desk ｜cast: father ｜source line: 7〔hand-drawn illustration, the passage's stuffiest cool frame〕Close-up: the reasons are spent yet he is angrier — half a step back and forth in place, an exhale, about to start again, the gesturing hand refusing to come down. The "hunting for causes" loop spins inside him. The frame is full and airless, pressed under the gray-teal dusk. Camera pushes in very slightly.Shot 05 · The daughter looks up · asks calmly ｜≈7s ｜segment: at the desk ｜scene: home desk ｜cast: daughter (father soft in foreground) ｜source lines: 8–10〔hand-drawn illustration, the pivot, lamplight beginning to warm〕Over-the-shoulder (past the father's shoulder) onto the daughter: she lifts her head slowly, her gaze calm and unconfrontational, and asks the reversing question — "do you want me more anxious, or do you want me to relax and think it through?" Her face is the first to catch the lamplight's warming layer, and a small pocket of negative space reopens around her. The rhythm cuts here from "rising" to "held." Camera pushes in on her a hair, very slowly.Shot 06 · Frozen · softening · the red pen exits ｜≈8s ｜segment: at the desk ｜scene: home desk ｜cast: father, daughter ｜source lines: 11–12〔hand-drawn illustration, warm golden lamplight blooming, negative space returning〕Closing medium shot: the father freezes, his gesturing hand stalled mid-air — then his shoulders drop, he sets the red pen gently back on the desk corner, the red slipping out of the focus, and his voice softens: "I'm not angry anymore — take your time." The warm golden lamplight washes over the desk and the two figures; the frame breathes again, the emptiness returned. The air between father and daughter loosens. Camera pulls back a touch, very slowly, settling on a breathing pause, a gentle fade at the tail.
+关于和已有工作管线衔接
+你这个上游产线已经不是“给一个粗糙文案，让 Agent 自己发散创作”了，而是已经产出了一个非常像 “导演说明书 / 制片圣经” 的东西。
+这意味着我前面给你的那套组合方案，应该从：
+“重创意生成型导演 Agent”
+微调成：
+“强约束执行型导演 Agent / 视觉总控 Agent”
+也就是说，系统的重心不再是“帮你想故事和分镜”，而是：
+把上游给出的规则结构化
+把规则稳定地下发到每个镜头
+控制一致性
+控制节奏与镜头连续性
+把不同模型（Wan / 混元 / LTX）调度起来
+自动质检并回炉重做
+
+一句话结论
+你的上游已经足够强，不需要一个“会乱发挥”的导演 Agent；你需要的是一个“不会跑偏的执行导演 + 场记 + continuity supervisor + 调度中台”。
+所以方案要改成：
+弱化：剧本发散、自由分镜、开放式创意生成
+强化：结构化约束、镜头状态管理、参考资产管理、模型适配、VLM 质检、镜头连续性控制
+
+为什么要改
+你给我的这份示例，已经非常完整了，里面其实包含了四层信息：
+
+1）全局风格约束
+也就是你的 Style Lock
+这不是普通 prompt，而是全局不可漂移的视觉宪法，包括：
+手绘日系插画感
+平涂 + 柔和过渡
+干净勾线
+非写实摄影
+留白逻辑
+青灰 → 暖金的色温弧线
+唯一鲜彩点 = 红笔 / 红叉
+固定或极缓推移
+各种禁忌项
+这层东西应该被系统视为：
+Project-level hard constraints（项目级硬约束）
+而不是每次让 LLM“重新理解一遍”。
+
+2）全局叙事弧线
+也就是你的 故事背景描述
+这里面最关键的不是“父亲辅导女儿作业”这个表面剧情，而是：
+主题：问题的方向决定情绪走向
+情绪弧线：紧张 → 释放
+色温弧线：青灰暮色 → 暖金台灯光
+空间弧线：留白被挤压 → 留白被归还
+节奏弧线：滔滔不绝 → 停顿 → 放软
+这其实已经是 导演级调度信息 了。
+所以 Agent 不应该重新“想一个更戏剧化的版本”，而是应该把这些弧线编译进每个分镜。
+
+3）角色圣经
+你的父亲、女儿描述已经很像 production bible 了：
+年龄
+长相基调
+穿着
+动作习惯
+情绪表达方式
+禁变项
+这意味着你不需要一个“角色设计 Agent”，你需要的是：
+Character lock system（角色锁定系统）
+它的职责是保证：
+父亲在 6 个分镜里是同一个人
+女儿在 6 个分镜里是同一个人
+不能一会戴眼镜一会不戴
+不能从普通圆脸变成萌系二次元脸
+不能从“怒气靠姿态”漂成“张嘴大吼”
+
+4）分镜执行说明
+你的 6 个分镜已经不是粗分镜，而是接近：
+shot spec（镜头规格书）
+每条已经含有：
+镜头编号
+时长建议
+场景
+角色
+原文对应
+景别
+构图
+动作
+光线变化
+情绪变化
+镜头运动
+视觉重点
+所以这时“自动分镜 Agent”已经不是核心，核心是：
+shot compiler（镜头编译器）
+把每一条 shot spec 编译成适合图像模型 / 视频模型的执行输入。
+
+所以，整套系统该怎么微调？
+
+一、把“导演 Agent”改造成“双层结构”
+我建议从单个“导演脑”改成两个 Agent：
+A. Creative Interpreter（创意解释器）
+职责不是创作，而是解析上游产线结果，抽出结构化字段：
+global style
+global negatives
+story arc
+character bible
+prop bible
+scene bible
+shot list
+emotional curve
+lighting curve
+continuity rules
+它更像“编剧助理 + 制片统筹”。
+
+B. Execution Director（执行导演）
+职责是把结构化信息转成：
+每个分镜的图像生成任务
+每个分镜的视频生成任务
+参考图依赖关系
+首帧 / 尾帧 / 过渡帧策略
+哪些镜头要固定机位，哪些要微推
+哪些镜头应该继承前一镜的空间和姿态
+它更像“执行导演 + 场记 + continuity supervisor”。
+
+二、你原先最需要补的一层：结构化中间表示（IR）
+这一步非常重要。
+因为你上游给的是中文自然语言，非常强，但如果直接喂给模型，会出现两个问题：
+prompt 太长，模型抓不住重点
+不同模型对同一段文字理解漂移
+所以中间必须加一层：
+Story Package / Scene IR / Shot IR
+也就是把你的自然语言说明，编译成结构化 JSON / YAML。
+
+你这个例子，建议拆成下面几层
+
+1）Project IR（项目级）
+YAMLproject_id: homework-father-daughtertheme: 问题的方向决定情绪走向format: ai漫剧visual_style:  medium: 手绘日系插画感动画  rendering: 平涂 + 柔和过渡 + 干净勾线  realism: non-photorealistic  environment: 低饱和素色墙前极简舞台  whitespace_policy: 背景细节少于人物，大量留白color_arc:  start: 青灰暮色  end: 暖金台灯光accent_color:  only_accent: 红笔与红叉camera_rule:  motion: 固定或极缓推移negative_rules:  - 写实真人感  - 伪电影感  - 胶片颗粒  - 高反差黑白  - 过饱和/HDR/霓虹  - 萌系大眼  - 夸张洋相表情  - 手持抖动  - 字幕/画面文字
+
+2）Character IR（角色级）
+YAMLcharacters:  father:    age: 35-42    appearance: 普通中年男性，短发，可能微微发福    clothes: 深色针织衫或衬衫，袖子挽到小臂    expression_mode:      anger: 靠身体前倾、手势节奏，不靠扭曲脸      relief: 手停住，肩膀垮下来，声音放软    locked_rules:      - 不戴/摘眼镜切换      - 不换发型      - 不穿西装      - 不龇牙咆哮  daughter:    age: 8-10    appearance: 圆脸，齐耳短发或低马尾，正常比例眼睛    clothes: 家居棉质上衣    expression_mode:      before: 低头承受      after: 平静好奇，不对抗    locked_rules:      - 不萌化      - 不哭闹      - 不切换发饰      - 年龄不漂移
+
+3）Prop / Scene IR（道具与场景级）
+YAMLscene:  location: 家中书桌一角  objects:    - 书桌    - 台灯    - 作业本    - 红笔props:  red_pen:    role: 唯一鲜彩点    visibility_arc:      shot_1: 在桌角      shot_2: 与红叉共同出现      shot_3: 随手势划动      shot_6: 放回桌角并离场
+
+4）Shot IR（镜头级）
+每个镜头除了文本，还要显式补出状态变量：
+YAMLshot_02:  duration: 6  camera:    framing: 中近景    angle: 常规    movement: 几乎不动，仅一次轻微顿挫  characters:    father:      position: 俯身逼近      action: 手指重重戳向错题      emotion: 急躁升级    daughter:      position: 坐在桌前      action: 肩膀微缩      emotion: 承受  lighting:    temperature: 青灰    lamp_warmth: low  composition:    whitespace: reduced    visual_pressure: high  prop_state:    red_pen: 在近处可见    red_cross: 已出现  continuity:    inherits_scene_from: shot_01    should_match_character_identity_from: shot_01
+
+三、把“参考图策略”做得更工程化
+这部分是你整套本地系统成败的关键。
+你现在的输入已经足够好了，但仅靠文字，人物和空间还是容易漂。所以建议在正式分镜渲染前，多加一个 Reference Bundle 生成阶段。
+
+先生成 5 类锚点资产
+1）风格锚点
+1～3 张，用来锁：
+线条
+平涂质感
+光感
+留白
+色温
+
+2）角色锚点
+父亲角色锚点 2～4 张
+女儿角色锚点 2～4 张
+重点不是做设定图，而是做：
+“这个角色在这个世界观里的真实镜头状态”
+比如父亲要有：
+中性状态
+俯身急躁状态
+愣住松弛状态
+女儿要有：
+低头写作业状态
+抬头平静反问状态
+
+3）场景锚点
+固定书桌一角、素墙、台灯、作业本的空间关系。
+
+4）道具锚点
+尤其是你的 红笔 很关键，建议单独做一个小型 prop lock：
+红笔的颜色
+粗细
+在桌面上的存在方式
+红叉的视觉强度
+因为它是你全段唯一鲜彩色点，这种“视觉母题”很容易被模型搞丢。
+
+5）关键转折锚点
+比如分镜 05 和 06 建议先单独做高质量 keyframe：
+女儿抬头反问
+父亲愣住放软
+这两个镜头是整段戏的支点，值得优先打磨。
+
+四、要把“连续性”做成一等公民，而不是附加功能
+你的这个故事虽然只有一个场景，但连续性要求其实非常高：
+父亲和女儿的人设不能漂
+桌灯的位置不能漂
+书桌和作业本位置不能漂
+留白是有弧线变化的
+色温是有弧线变化的
+红笔是有“进入视野—成为张力点—离场”的运动逻辑的
+所以系统里需要一个：
+Continuity Graph（连续性图）
+
+我建议每个镜头记录这些 continuity state
+视觉状态
+父亲位置
+女儿位置
+台灯位置
+作业本位置
+红笔位置
+留白占比
+色温状态
+情绪状态
+父亲愤怒等级（0~1）
+女儿紧张等级（0~1）
+场面压迫感（0~1）
+松弛度（0~1）
+镜头关系
+是否继承前一镜空间
+是否继承前一镜姿态
+是否需要首尾帧衔接
+是否需要用前镜关键帧作为参考
+
+你这个案例可以简化成一条情绪曲线
+
+点击图片可查看完整电子表格
+这个东西非常有用，因为它可以喂给：
+prompt compiler
+video movement planner
+VLM 质检器
+剪辑节奏控制器
+
+五、VideoClaw 这类方案要怎么微调？
+如果还沿用我前面说的那套组合，我现在会这样改：
+
+1）VideoClaw：保留，但要改定位
+它继续做：
+项目壳
+任务管理
+分镜资产管理
+UI 工作台
+人工可回退编辑
+但它原本偏“从创意到视频”的开放式流程，
+你这里要改成：
+从上游 Story Package 到镜头执行的封闭式流程
+也就是把它的“脚本创作”部分降级成可选项，把“shot pipeline orchestration”升为核心。
+
+2）creative-skills：价值更高了
+因为你已经有很强的上游结构，所以 creative-skills 这种：
+YAML 驱动
+ComfyUI 工作流调度
+镜头重跑
+任务恢复
+图生视频 / 首尾帧视频
+自动合成
+会变得更适合你。
+你甚至可以把它当成：
+执行引擎层
+而不是最终产品层。
+
+3）ViMax：不要拿来做主导演，拿来做“审片员”
+这个很关键。
+以前我会说它可以参考导演能力；
+现在我更建议你用它那类思路做：
+候选首帧打分
+连续性检查
+构图检查
+人物一致性检查
+色温弧线检查
+道具一致性检查
+它更适合做：
+VLM Reviewer / QC Agent
+而不是创作主脑。
+
+4）Story2Board：价值下降一点，但仍然有用
+因为你的分镜已经写得很细了，它不需要帮你“想分镜”。
+它更适合在：
+生成 storyboard 卡片
+做一组连续的参考分镜图
+保持人物一致性和构图差异
+这个层面发挥作用。
+
+六、最重要的一层：Prompt Compiler 必须做“分层编译”
+这一层如果做不好，整个系统会又慢又漂。
+你不能把你上面的整段长文本，原封不动同时塞给每个模型。
+必须拆成 4 层 prompt：
+
+1）Global Prompt
+全片共用：
+风格
+负面约束
+时代 / 场景
+色温大方向
+镜头运动总原则
+
+2）Character Prompt
+每个角色固定：
+外形
+衣着
+表达方式
+禁变项
+
+3）Shot Prompt
+每镜变化：
+景别
+动作
+构图
+情绪
+光线变化
+红笔状态
+留白状态
+
+4）Model Adapter Prompt
+不同模型不同适配：
+图像模型：强调构图、角色、色调、材质
+视频模型：强调动作幅度、镜头运动、首尾帧连续性
+VLM 检查：强调是否遵守 style lock / continuity
+
+七、你这个上游产线，还建议再补两类字段
+你已经很强了，但我建议再加两个字段，会对自动化帮助特别大。
+
+补充字段 1：镜头起止状态（start state / end state）
+现在你的分镜主要是描述镜头内部内容，但视频生成尤其吃“起点”和“终点”。
+比如分镜 06：
+start：父亲僵住，手停在半空，红笔还在手里
+end：红笔放回桌角，肩膀垮下，画面拉远，暖光完全漫开
+如果你把这类字段显式写出来，
+LTX / Wan / 混元这种首尾帧或图生视频流程会更稳定。
+
+补充字段 2：优先保真项（priority locks）
+每个镜头并不是所有信息都同样重要。
+建议你给每镜加一个：
+YAMLpriority_locks:  - father_identity  - daughter_identity  - red_pen_visibility  - bluegray_to_warm_transition  - whitespace_change
+这样当模型能力不够时，系统知道先保什么，后牺牲什么。
+这在自动重试时特别有用。
+
+八、如果是你来落地，我会给你这样一个新的系统分层
+
+2. Story Package Ingestor
+输入你上游产线产出的：
+style lock
+story background
+character bible
+shot descriptions
+输出结构化 IR。
+
+2. Bible Compiler
+把信息固化为：
+style bible
+character bible
+scene bible
+prop bible
+continuity bible
+
+3. Reference Bundle Generator
+先做：
+风格参考图
+父亲参考图
+女儿参考图
+场景参考图
+红笔 / 作业本道具参考图
+转折镜头关键帧
+
+4. Shot Planner / Shot Compiler
+把每个 shot 编译成：
+图像生成任务
+视频生成任务
+参考依赖
+首尾帧关系
+负面约束
+motion 级别
+
+5. Render Router
+按任务类型分发给：
+ComfyUI 图像工作流
+Wan 2.2
+混元
+LTX 2.0
+例如：
+静态 keyframe：图像模型
+微动作、固定镜头：LTX
+情绪转折、动作过渡：Wan / 混元
+首尾帧可控强需求：优先 LTX 路线
+
+6. VLM Reviewer
+对输出做检查：
+人物是否一致
+红笔是否保住了
+是否出现额外鲜彩色
+是否写实化了
+留白是否正确
+色温是否遵循曲线
+镜头运动是否太大
+有无畸形手 / 多指 / 崩脸
+
+7. Retry / Repair Agent
+如果不合格，不是整段重跑，而是：
+换 seed
+调整 prompt emphasis
+加强角色参考
+加强 prop 参考
+降低运动幅度
+从上一个镜头继承更多首帧条件
+
+8. Timeline Assembler
+最终：
+视频拼接
+节奏对齐
+淡入淡出
+必要时补空镜或过渡镜
+输出到你的剪辑工程
+
+九、最核心的观念变化
+我觉得这里最重要的一点是：
+你不应该再追求“一个很聪明的 Agent”
+而应该追求：
+一个不乱来的、可审计的、结构化的执行系统
+因为你上游已经把“人味”和“导演感”给出来了。
+真正缺的是：
+结构化约束落地
+跨镜头一致性
+对本地模型的适配
+自动质检与回炉
+这四件事，比“再来一个很会写提示词的创意 Agent”更值钱。
+
+十、我的最终建议
+如果基于你现在这套上游，我会把原方案改成下面这个优先级：
+第一阶段
+先不要做超级复杂导演 Agent。
+先做一个最小可用闭环：
+上游输出 Story Package
+编译为结构化 IR
+自动生成角色/场景/道具锚点图
+自动生成每镜 keyframe
+图生视频 / 首尾帧视频
+VLM 自动审片
+不合格自动重试
+自动拼接导出
+这阶段就已经很有产品价值了。
+
+第二阶段
+再补强“导演脑”：
+自动补镜
+自动过渡镜头建议
+镜头节奏优化
+候选版本比较
+基于史实 / 文段的视觉隐喻建议
+
+第三阶段
+再做可视化节点画布：
+项目节点
+风格节点
+角色节点
+场景节点
+分镜节点
+参考图节点
+视频节点
+质检节点
+拼接节点
+这时你才是真正在做一个“本地版 MagicLight / 即梦导演系统”。
+
+如果你愿意，我下一步可以直接帮你做两件非常具体的东西之一：
+把你这套上游结果，设计成一份可落地的 JSON/YAML Schema
+直接给你画一版系统架构图 + 节点画布设计 + 各节点输入输出字段
+如果你想更实操一点，我建议我下一条就直接帮你写：
+“Story Package Schema v1”
+这样你就能马上开始接 VideoClaw / ComfyUI / Wan / LTX 了。
+和资深从业者的交流
+漫剧公司技术总监
+我个人觉得3D建模后，再去出视频，这个可能是以后发展方向，这种情况下可以保持场景人物的高度一致性。就像你给导演搭建了一个3D摄影棚和准备好了演员，非常符合现实导演的工作流，也同样适用于游戏行业。
+如果单纯去拼语言模型和分镜图片模型，小团队是很难突破、超越大厂的，先不说算力，单是数据就是个大问题。
+墨汁乌鸫
+2026年7月17日 13:49
+当然如果是给开源模型,可能几个掣肘之处:难以处理元素丰富的复杂场
+景,因为模型没有做多元素特化;提示词难度特别高,说实话我觉得能玩转
+wan2.2那套提示词的人真的没几个;抽卡效率成本控制,即使是强约束,
+因为开源模型本身部署方式,你是一定要在本地部署或者在托管社区/农场
+部署的,前者硬件成本比较高,后者则需要持续不断地租金或者会会费
+墨汁乌鸫:最好的约束是用demo建模形成3D动画,然后给对空间理解力强的模型做文
+字描述约束,最后一起给视频模型
+墨汁乌鸫
+2026年7月17日13:49
+SD那种贵是有原因的
+墨汁乌鸫
+2026年7月17日13:50
+个人做私有流程,工程化的过程是最大难题
+墨汁乌鸫
+2026年7月17日13:50
+每个难题都需要投入钱和时间
+墨汁乌鸫
+这都是成本
+2026年7月17日 13:50
+彩平图AI生成
+2026年7月17日13:57
+border
+开源是没有未来的
+Hocassian
+因为牛逼的人太多了,肯定有人跟我想到一块去,但是现在并没有看
+到类似的方案出来,我刚跟相关产业的朋友聊了一下,他说是开源模型的生态越来越...
+墨汁乌鸫
+2026年7月17日13:59
+图像开源模型还不错,生态很好
+墨汁乌鸫
+2026年7月17日 13:59
+视频开源模型太少了
+某大厂剪辑工具app产品经理A
+刚开完会，仔细看完你的想法了
+感觉这个有点像之前你做智能剪辑的思路，就是好的模型用在好的场景，垃圾模型用在不太重要的场景
+[坏笑][坏笑]
+我觉得这个是 seeddance2.0 跟 1.5 Pro的差距就在这里
+我是觉得行不通的 如果效果要求高的话
+因为我们也有做 1.5 Pro 跟 2.0 的差距，其实 1.5 Pro 它已经很强了，但是他在动作，走动一下子就把差距体现出来了，即使一样是非常丰富的图片跟文字，差距也非常大
+但是如果只是剪剪片，做 b-roll我觉得这个思路够了 完全够用
+但是如果是纯 AI 生成为交付内容，我觉得哪个模型差了 哪个就是短板
+但我觉得你那个思路能通的话，说不定做一些质量不高的漫剧应该是可以的，比如像那种 2D 卡通漫剧之类的，你那套模式应该能跑得通
+某大厂剪辑工具app产品经理B
+很难
+开源视频现在已经基本处于半放弃状态了
+没人做生态
+生态指的是哪部分
+comfyui那种？
+比如之前wan2.1
+大家都乐于做lora，做蒸馏
+懂你意思
+如果有参考图 我理解lora那部分能力应该也被覆盖了吧？
+是两回事
