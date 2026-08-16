@@ -21,6 +21,14 @@ interface SeedreamOpts {
   outDir: string;
   outPrefix: string;
   timeoutMs?: number;
+  /** 用户中止信号：与单次请求超时并成一个信号 */
+  signal?: AbortSignal;
+}
+
+/** 用户中止信号 + 单次请求超时，任一触发即断 */
+function reqSignal(ms: number, user?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  return user ? AbortSignal.any([user, timeout]) : timeout;
 }
 
 function toDataUri(p: string): string {
@@ -48,7 +56,7 @@ export async function seedreamGenerate(opts: SeedreamOpts): Promise<string[]> {
     method: "POST",
     headers: { Authorization: `Bearer ${opts.arkApiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 180_000),
+    signal: reqSignal(opts.timeoutMs ?? 180_000, opts.signal),
   });
   if (!res.ok) throw new Error(`Seedream 请求失败: ${res.status} ${(await res.text()).slice(0, 400)}`);
   const j = (await res.json()) as {
@@ -63,7 +71,7 @@ export async function seedreamGenerate(opts: SeedreamOpts): Promise<string[]> {
   if (item.b64_json) {
     buf = Uint8Array.from(Buffer.from(item.b64_json, "base64"));
   } else if (item.url) {
-    const dl = await fetch(item.url, { signal: AbortSignal.timeout(120_000) });
+    const dl = await fetch(item.url, { signal: reqSignal(120_000, opts.signal) });
     if (!dl.ok) throw new Error(`Seedream 结果下载失败: ${dl.status}`);
     buf = new Uint8Array(await dl.arrayBuffer());
   } else {

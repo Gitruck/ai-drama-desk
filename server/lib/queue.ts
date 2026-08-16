@@ -17,6 +17,13 @@ import { getGpuLease, releaseGpu, tryAcquireGpu } from "./gpu-lease.ts";
 const jobs: GenJob[] = [];
 let seq = 0;
 
+/** 每个在途任务的中止句柄；任务一结束就回收，别攒着泄漏。 */
+const controllers = new Map<string, AbortController>();
+
+function isFinished(status: GenJob["status"]): boolean {
+  return status === "done" || status === "error" || status === "canceled";
+}
+
 type Lane = "local" | "cloud" | "mock";
 const LANE_LIMIT: Record<Lane, number> = { local: 1, cloud: 2, mock: 2 };
 
@@ -40,7 +47,7 @@ export function listJobs(projectId?: string): GenJob[] {
 
 /**
  * 清掉已结束任务的记录（前端的失败/告警横幅据 jobs 渲染，不清就一直挂着）。
- * 只动 done / error，queued 与 running 一律不碰——删在跑的任务会让调度器丢失状态。
+ * 只动 done / error / canceled，queued 与 running 一律不碰——删在跑的任务会让调度器丢失状态。
  * 返回实际清掉的条数。
  */
 export function dismissJobs(opts: { projectId?: string; ids?: string[] } = {}): number {
@@ -48,13 +55,42 @@ export function dismissJobs(opts: { projectId?: string; ids?: string[] } = {}): 
   let removed = 0;
   for (let i = jobs.length - 1; i >= 0; i--) {
     const j = jobs[i]!;
-    if (j.status !== "done" && j.status !== "error") continue;
+    if (!isFinished(j.status)) continue;
     if (opts.projectId && j.projectId !== opts.projectId) continue;
     if (idSet && !idSet.has(j.id)) continue;
     jobs.splice(i, 1);
     removed++;
   }
   return removed;
+}
+
+/**
+ * 中止一个任务。
+ * queued 直接落 canceled（调度器不会再选它）；running 走 abort——
+ * provider 侧的 fetch 应声而断，`runJob` 的 catch 认出 abort 落 canceled，
+ * finally 照常释放 GPU 租约并 `pump()`，后面排队的立刻开跑。
+ * 已结束的任务幂等返回，不报错。
+ */
+export function cancelJob(id: string): GenJob | null {
+  const job = jobs.find((j) => j.id === id);
+  if (!job) return null;
+  if (isFinished(job.status)) return job;
+  if (job.status === "queued") {
+    job.status = "canceled";
+    job.finishedAt = Date.now();
+    controllers.delete(job.id);
+    return job;
+  }
+  controllers.get(job.id)?.abort(new Error("用户中止"));
+  return job;
+}
+
+/** 批量中止某项目的在途任务；不跨项目。返回被动到的任务。 */
+export function cancelProjectJobs(projectId: string): GenJob[] {
+  return jobs
+    .filter((j) => j.projectId === projectId && !isFinished(j.status))
+    .map((j) => cancelJob(j.id))
+    .filter((j): j is GenJob => j != null);
 }
 
 /** 是否已有同镜同类任务在排队/运行（防重复入队烧钱烧卡） */
@@ -160,11 +196,16 @@ function pump() {
         });
         if (!next) break;
         const lane = laneOf(next.provider);
-        if (lane === "local" && !tryAcquireGpu("generation", next.id)) continue;
+        // 抢不到租约就收工，等下次唤醒。`continue` 会原地忙等——find 的前置条件目前
+        // 恰好走不到这一步，但那是运气，不该拿 CPU 空转做兜底。
+        if (lane === "local" && !tryAcquireGpu("generation", next.id)) break;
         next.status = "running";
         next.startedAt = Date.now();
+        const controller = new AbortController();
+        controllers.set(next.id, controller);
         // 不 await 串死其他车道；每个 job 完成后再 pump
-        void runJob(next).finally(() => {
+        void runJob(next, controller.signal).finally(() => {
+          controllers.delete(next.id);
           if (lane === "local") releaseGpu(next.id);
           pumping = false;
           pump();
@@ -182,7 +223,7 @@ export function resumeGenerationPump(): void {
   pump();
 }
 
-async function runJob(job: GenJob) {
+async function runJob(job: GenJob, signal: AbortSignal) {
   try {
     const cfg = loadConfig();
     const p = getProject(job.projectId);
@@ -190,11 +231,12 @@ async function runJob(job: GenJob) {
     const style = p.styleId ? getStyle(p.styleId) : null;
     // 前缀含 job.id（内含全局递增 seq），杜绝同毫秒撞名覆盖
     const ts = `${Date.now().toString(36)}-${job.id.split("-")[0]}`;
+    const comfyCommon = { signal, stallToleranceMs: cfg.comfyStallToleranceMs };
     let outputs: string[] = [];
 
     // 角色参考图（人设锚点）：自成一支，产物直接落角色源图库，不涉及镜头。
     if (job.kind === "charref") {
-      await runCharRefJob(job, p, style, cfg, ts);
+      await runCharRefJob(job, p, style, cfg, ts, signal);
       job.status = "done";
       return;
     }
@@ -234,6 +276,7 @@ async function runJob(job: GenJob) {
           height: cfg.keyframeHeight,
           outDir,
           outPrefix: prefix,
+          ...comfyCommon,
         });
       } else if (job.provider === "seedream-image") {
         if (!cfg.arkApiKey) throw new Error("未配置 arkApiKey（火山方舟 API Key）");
@@ -249,6 +292,7 @@ async function runJob(job: GenJob) {
           size: cfg.seedreamSize,
           outDir,
           outPrefix: prefix,
+          signal,
         });
       } else {
         throw new Error(`未知 keyframe provider: ${job.provider}`);
@@ -289,6 +333,7 @@ async function runJob(job: GenJob) {
           frames: wanFrames(durationSec, cfg.videoFps),
           outDir,
           outPrefix: prefix,
+          ...comfyCommon,
         });
       } else if (job.provider === "hunyuan-video") {
         if (!cfg.comfyVideoHunyuan) throw new Error("未配置混元 workflow（settings → comfyVideoHunyuan）");
@@ -304,6 +349,7 @@ async function runJob(job: GenJob) {
           frames: wanFrames(durationSec, 24),
           outDir,
           outPrefix: prefix,
+          ...comfyCommon,
         });
       } else if (job.provider === "h3-video") {
         if (!cfg.comfyVideoH3) throw new Error("未配置 H3 workflow（settings → comfyVideoH3）");
@@ -320,6 +366,7 @@ async function runJob(job: GenJob) {
           frames: h3Frames(durationSec),
           outDir,
           outPrefix: prefix,
+          ...comfyCommon,
         });
       } else if (job.provider === "fal-video") {
         if (!cfg.falKey) throw new Error("未配置 falKey");
@@ -335,6 +382,7 @@ async function runJob(job: GenJob) {
           resolution: cfg.videoHeight >= 720 ? "720p" : cfg.videoHeight >= 580 ? "580p" : "480p",
           outDir,
           outPrefix: prefix,
+          signal,
         });
       } else {
         throw new Error(`未知 video provider: ${job.provider}`);
@@ -353,15 +401,23 @@ async function runJob(job: GenJob) {
     }
     job.status = "done";
   } catch (e) {
-    job.status = "error";
-    job.error = e instanceof Error ? e.message : String(e);
+    // 用户中止不是失败：判据用 signal 而不是异常类型——provider 各自抛什么由它们决定，
+    // 但「这次结束是不是用户按的」只有信号说了算。
+    if (signal.aborted) {
+      job.status = "canceled";
+    } else {
+      job.status = "error";
+      job.error = e instanceof Error ? e.message : String(e);
+    }
   } finally {
+    // 不可中断的 provider（mock）可能在 abort 之后才跑完；此时状态已是 canceled，不倒回 done。
+    if (signal.aborted && job.status === "done") job.status = "canceled";
     job.finishedAt = Date.now();
   }
 }
 
 /** 角色参考图（人设锚点）生成：产物写角色源图库，即刻进双参考集。 */
-async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null, cfg: StudioConfig, ts: string) {
+async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null, cfg: StudioConfig, ts: string, signal: AbortSignal) {
   const charName = job.charName;
   if (!charName) throw new Error("charref 任务缺少 charName");
   const character = p.doc.characters.find((c) => c.name === charName);
@@ -401,6 +457,8 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
       height: cfg.keyframeHeight,
       outDir,
       outPrefix: prefix,
+      signal,
+      stallToleranceMs: cfg.comfyStallToleranceMs,
     });
   } else if (job.provider === "seedream-image") {
     if (!cfg.arkApiKey) throw new Error("未配置 arkApiKey（火山方舟 API Key）");
@@ -413,6 +471,7 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
       size: cfg.seedreamSize,
       outDir,
       outPrefix: prefix,
+      signal,
     });
   } else {
     throw new Error(`未知 charref provider: ${job.provider}（仅支持 comfyui-image / comfyui-image2 / seedream-image / mock-image）`);

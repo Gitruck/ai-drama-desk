@@ -8,6 +8,15 @@ import type { CharacterDoc, Shot, StoryboardDoc } from "./types.ts";
 const CN_BLOCK = /##\s*一、中文稿|中文稿（喂/;
 const EN_BLOCK = /##\s*二、English Storyboard|English Storyboard/i;
 
+/**
+ * 剥 Markdown 强调符号。真实产物的元信息键名与角色头普遍带 `**`（金样 b17.md 没有），
+ * 键名匹配前不剥就全线对不上。只用于**键名匹配与角色名提取**——描述正文原样保留，
+ * 加粗是作者的语义，下游要拿去喂平台。
+ */
+function stripEmphasis(s: string): string {
+  return s.replace(/(\*\*|__|\*|`)/g, "").trim();
+}
+
 /** 段落标记：①…⑤（可带 ### 前缀与「视觉基调」等标题文字） */
 function sectionMarker(line: string): 1 | 2 | 3 | 4 | 5 | null {
   const m = line.match(/^#{0,6}\s*([①②③④⑤])/);
@@ -107,7 +116,17 @@ function parseShots(block: string, en = false): Shot[] {
   return shots;
 }
 
-/** ③ 角色区块 → CharacterDoc[]：短行「名字（备注）」视作角色头 */
+/**
+ * 角色名 = 剥强调后、首个中英文左括号之前的部分。
+ * 括注是「B10 / B20 已建 · 同一张脸」这类溯源说明，不进名字；
+ * `成年·林` 的间隔号不是截断点，必须留在名字里。
+ */
+function characterName(headingText: string): string {
+  const head = stripEmphasis(headingText.split(/[（(]/)[0]);
+  return head || stripEmphasis(headingText);
+}
+
+/** ③ 角色区块 → CharacterDoc[]：标题行一律是角色头；无标题稿件退回「名字（备注）」短行 */
 function parseCharacters(block: string): CharacterDoc[] {
   const lines = block.split(/\r?\n/);
   const chars: CharacterDoc[] = [];
@@ -123,14 +142,18 @@ function parseCharacters(block: string): CharacterDoc[] {
   for (const line of lines) {
     const isHeading = /^#{3,6}\s/.test(line.trim());
     const t = line.replace(/^#{1,6}\s*/, "").trim();
-    // 角色头两种形态：① 短行「名字（备注）」 ② 带 ###+ 前缀的短行（可无括号，如「#### 旁白」）
+    // ③ 区块内的标题行一律是角色头，不设长度上限——真实角色头带长括注，
+    // 卡长度会让整个角色连同描述被吞进上一个角色的正文里（B10/B20 丢主角的原因）。
+    if (isHeading && t.length > 0) {
+      flush();
+      cur = { name: characterName(t), description: "", refs: [] };
+      continue;
+    }
+    // 不带 #### 前缀的稿件兜底：短行「名字（备注）」。这里放开长度会把正文误判成角色头。
     const m = t.match(/^(\S[^（(]{0,20})[（(]([^）)]*)[）)]$/);
     if (m && t.length <= 30) {
       flush();
-      cur = { name: m[1].trim(), description: "", refs: [] };
-    } else if (isHeading && t.length > 0 && t.length <= 24) {
-      flush();
-      cur = { name: t, description: "", refs: [] };
+      cur = { name: characterName(t), description: "", refs: [] };
     } else if (cur) {
       buf.push(line);
     }
@@ -163,12 +186,13 @@ function parseStyleSection(block: string): { styleLock: string; negatives?: stri
   return { styleLock, negatives };
 }
 
-/** 元信息扫描（不依赖列表符号，全稿逐行匹配） */
+/** 元信息扫描（不依赖列表符号，全稿逐行匹配；键名先剥强调符号） */
 function parseMeta(text: string, doc: StoryboardDoc) {
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/^[-*]\s*/, "").trim();
+    const line = stripEmphasis(raw.replace(/^[-*]\s*/, ""));
     let m: RegExpMatchArray | null;
-    if ((m = line.match(/区间总时长\s*[:：](.*)$/))) {
+    // 两种键名：现行契约的「区间总时长：a → b ≈ c 秒」，与早期产物的「区间：a → b，总时长 ≈ c 秒」
+    if ((m = line.match(/^区间(?:总时长)?\s*[:：](.*)$/)) || (m = line.match(/区间总时长\s*[:：](.*)$/))) {
       const nums = (m[1].match(/\d+(?:\.\d+)?/g) ?? []).map(parseFloat);
       // 形如 track_st 294.965 → track_ed 331.835 ≈ 36.9 秒
       if (nums.length >= 3) {
@@ -180,7 +204,8 @@ function parseMeta(text: string, doc: StoryboardDoc) {
       }
     } else if ((m = line.match(/建议分镜数\s*[:：]\s*(\d+)/))) {
       doc.suggestedShots = parseInt(m[1], 10);
-    } else if ((m = line.match(/^风格参考图.*[:：](.*)$/))) {
+    } else if ((m = line.match(/^(?:风格参考图|建议参考图).*[:：](.*)$/))) {
+      // 真实产物用的是「建议参考图」，两种键名等价
       doc.refHints = m[1].trim();
     }
   }
@@ -263,6 +288,14 @@ export function parseStoryboard(md: string): StoryboardDoc {
   return doc;
 }
 
+/** cast 空值词：这些不是角色，不该触发缺失告警 */
+const EMPTY_CAST = new Set(["无人", "无", "空镜", "无角色", "不适用", "none", "n/a", "na", "-", "—", "–"]);
+
+/** 角色名归一（比对用）：剥强调 + 截到首个左括号，让「女儿（父亲虚在前景）」对上「女儿」 */
+function castKey(value: string): string {
+  return characterName(value);
+}
+
 /** 校验解析结果是否够用（工作台导入时给出提示） */
 export function validateDoc(doc: StoryboardDoc): string[] {
   const warnings: string[] = [];
@@ -270,6 +303,21 @@ export function validateDoc(doc: StoryboardDoc): string[] {
   if (doc.shots.length === 0) warnings.push("未解析到任何分镜（④ 区块），请检查分镜稿格式或手工投喂 shots.json");
   if (!doc.styleLock) warnings.push("未解析到 ① 视觉基调");
   if (doc.characters.length === 0) warnings.push("未解析到 ③ 角色描述");
+  // 交叉校验：只报「角色数为 0」会让部分丢失静默通过——丢的偏偏常是主角，
+  // 主角没有角色条目就拿不到参考图，跨镜跨集的脸会一路漂而没人察觉。
+  const defined = new Set(doc.characters.map((c) => castKey(c.name)));
+  const missing: string[] = [];
+  for (const shot of doc.shots) {
+    for (const raw of shot.cast) {
+      const name = castKey(raw);
+      if (!name || EMPTY_CAST.has(name.toLowerCase())) continue;
+      if (defined.has(name) || missing.includes(name)) continue;
+      missing.push(name);
+    }
+  }
+  if (missing.length > 0) {
+    warnings.push(`④ 分镜里出现但 ③ 未定义的角色：${missing.join("、")}（这些角色拿不到参考图，一致性会漂）`);
+  }
   const noDur = doc.shots.filter((s) => s.durationSec == null).length;
   if (noDur > 0) warnings.push(`${noDur} 个分镜缺建议秒数，将用默认秒数兜底`);
   return warnings;

@@ -27,7 +27,13 @@ export const api = {
   projects: () => req("/api/v1/projects"),
   project: (id: string) => req(`/api/v1/projects/${id}`),
   createProject: (body: any) => req("/api/v1/projects", { method: "POST", body: JSON.stringify(body) }),
+  /** 只解析不落盘：预览用，磁盘上不会多出项目 */
+  previewProject: (body: any) => req("/api/v1/projects", { method: "POST", body: JSON.stringify({ ...body, dryRun: true }) }),
   updateProject: (id: string, patch: any) => req(`/api/v1/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  reparseProject: (id: string) => req(`/api/v1/projects/${id}/reparse`, { method: "POST" }),
+  projectDeletionPreview: (id: string) => req(`/api/v1/projects/${id}/deletion-preview`),
+  deleteProject: (id: string) =>
+    req(`/api/v1/projects/${id}`, { method: "DELETE", body: JSON.stringify({ confirmed: true }) }),
   generate: (id: string, shot: number, kind: "keyframe" | "video", provider: string) =>
     req(`/api/v1/projects/${id}/shots/${shot}/${kind}`, { method: "POST", body: JSON.stringify({ provider }) }),
   choose: (id: string, shot: number, kind: "keyframe" | "video", file: string) =>
@@ -45,6 +51,9 @@ export const api = {
   jobs: (project?: string) => req(`/api/v1/jobs${project ? `?project=${project}` : ""}`),
   dismissJobs: (body: { project?: string; ids?: string[] }) =>
     req("/api/v1/jobs/dismiss", { method: "POST", body: JSON.stringify(body) }),
+  cancelJob: (id: string) => req(`/api/v1/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  cancelProjectJobs: (project: string) =>
+    req("/api/v1/jobs/cancel", { method: "POST", body: JSON.stringify({ project }) }),
   loraJobs: () => req("/api/v1/lora/jobs"),
   loraJob: (id: string) => req(`/api/v1/lora/jobs/${id}`),
   validateLora: (body: any) => req("/api/v1/lora/validate", { method: "POST", body: JSON.stringify(body) }),

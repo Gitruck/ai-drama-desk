@@ -26,17 +26,88 @@ interface ComfyGenOpts {
   outDir: string;
   outPrefix: string;
   timeoutMs?: number;
+  /** ComfyUI 连续不可达多久判失速（默认 90s）。留窗是为了不让偶发抖动打断真在跑的长片。 */
+  stallToleranceMs?: number;
+  /** 轮询间隔（默认 2s）；测试用它把失速判据的验证压到毫秒级。 */
+  pollIntervalMs?: number;
+  /** 用户中止信号：透传给全部 fetch，并在中止时回收 ComfyUI 侧的 prompt。 */
+  signal?: AbortSignal;
   /** 项目所选画风的 LoRA 绑定；存在时动态覆盖模板节点与触发词。 */
   styleLora?: { weightsPath: string; triggerWords: string[]; strength?: number };
 }
 
-async function uploadImage(comfyUrl: string, filePath: string): Promise<string> {
+/** 历史里查不到、队列里也查不到，连续几次才判 prompt 丢失——执行完到写进 history 之间有极短空窗。 */
+const ORPHAN_CONFIRMATIONS = 3;
+
+/** 把用户中止信号与单次请求超时并成一个：任一触发即断。 */
+function reqSignal(ms: number, user?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  return user ? AbortSignal.any([user, timeout]) : timeout;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** ComfyUI 队列项形如 [序号, prompt_id, prompt, extra, outputs] */
+function queueHasPrompt(list: unknown, promptId: string): boolean {
+  return Array.isArray(list) && list.some((item) => Array.isArray(item) && item.includes(promptId));
+}
+
+/**
+ * 该 prompt 是否还在 ComfyUI 队列里。
+ * true=在跑或在等；false=两个队列都没有；null=队列本身没问出来（不作判据，交给不可达窗）。
+ */
+async function promptInQueue(comfyUrl: string, promptId: string, signal: AbortSignal): Promise<boolean | null> {
+  const res = await fetch(`${comfyUrl}/queue`, { signal }).catch(() => null);
+  if (!res || !res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { queue_running?: unknown; queue_pending?: unknown } | null;
+  if (!body) return null;
+  return queueHasPrompt(body.queue_running, promptId) || queueHasPrompt(body.queue_pending, promptId);
+}
+
+/**
+ * 用户中止后回收 ComfyUI 侧的 prompt。
+ * `/interrupt` 是**全局**的——只有确认当前跑的就是本任务的 prompt 才发，
+ * 否则会顺手打断别人（另一个客户端、或 LoRA 训练之外的手工出图）的活。
+ * 全程用独立超时信号：此时用户信号已经 abort，拿它发请求会立刻失败。
+ */
+export async function comfyCancelPrompt(comfyUrl: string, promptId: string): Promise<void> {
+  const res = await fetch(`${comfyUrl}/queue`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+  if (!res || !res.ok) return;
+  const body = (await res.json().catch(() => null)) as { queue_running?: unknown; queue_pending?: unknown } | null;
+  if (!body) return;
+  if (queueHasPrompt(body.queue_pending, promptId)) {
+    await fetch(`${comfyUrl}/queue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delete: [promptId] }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => null);
+  }
+  if (queueHasPrompt(body.queue_running, promptId)) {
+    await fetch(`${comfyUrl}/interrupt`, { method: "POST", signal: AbortSignal.timeout(5000) }).catch(() => null);
+  }
+}
+
+async function uploadImage(comfyUrl: string, filePath: string, signal?: AbortSignal): Promise<string> {
   const data = readFileSync(filePath);
   const form = new FormData();
   const name = `${Date.now().toString(36)}-${basename(filePath)}`;
   form.append("image", new Blob([data]), name);
   form.append("overwrite", "true");
-  const res = await fetch(`${comfyUrl}/upload/image`, { method: "POST", body: form, signal: AbortSignal.timeout(60_000) });
+  const res = await fetch(`${comfyUrl}/upload/image`, { method: "POST", body: form, signal: reqSignal(60_000, signal) });
   if (!res.ok) throw new Error(`ComfyUI 上传参考图失败: ${res.status} ${await res.text()}`);
   const j = (await res.json()) as { name: string; subfolder?: string };
   return j.subfolder ? `${j.subfolder}/${j.name}` : j.name;
@@ -130,17 +201,18 @@ export async function comfyGenerate(opts: ComfyGenOpts): Promise<string[]> {
   if (opts.height && map.height) setNode(graph, map.height, opts.height);
   if (opts.frames && map.frames) setNode(graph, map.frames, opts.frames);
 
+  const signal = opts.signal;
   if (map.imageInputs) {
     // 逐张上传一次；槽位多于参考图时断开未使用的可选输入。黑图仍会被 Qwen
     // 编码成一张 Picture，不能充当“无输入”的占位符。
     const uploaded: string[] = [];
     for (const ref of (opts.refImages ?? []).slice(0, map.imageInputs.length)) {
-      uploaded.push(await uploadImage(opts.comfyUrl, ref));
+      uploaded.push(await uploadImage(opts.comfyUrl, ref, signal));
     }
     applyUploadedImageInputs(graph, opts.wf, uploaded);
   }
   if (opts.startImage && map.startImage) {
-    const uploaded = await uploadImage(opts.comfyUrl, opts.startImage);
+    const uploaded = await uploadImage(opts.comfyUrl, opts.startImage, signal);
     setNode(graph, map.startImage, uploaded);
   }
 
@@ -149,29 +221,74 @@ export async function comfyGenerate(opts: ComfyGenOpts): Promise<string[]> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt: graph, client_id: clientId }),
-    signal: AbortSignal.timeout(30_000),
+    signal: reqSignal(30_000, signal),
   });
   if (!submit.ok) throw new Error(`ComfyUI 提交失败: ${submit.status} ${await submit.text()}`);
   const { prompt_id } = (await submit.json()) as { prompt_id: string };
 
-  const deadline = Date.now() + (opts.timeoutMs ?? 30 * 60_000);
+  try {
+    return await awaitOutputs(opts, prompt_id);
+  } catch (e) {
+    // 用户中止：顺手把 ComfyUI 那边的活也停了，否则卡还在替一个没人要的结果空转
+    if (signal?.aborted) await comfyCancelPrompt(opts.comfyUrl, prompt_id);
+    throw e;
+  }
+}
+
+/**
+ * 轮询产物，并在三种死法上各自快失败。
+ * 老实现只会 `continue` 到总超时——ComfyUI 崩了/重启了，判据全在手边却一条不用，
+ * 用户对着「生成中」白等 30 分钟，本地车道连同 GPU 租约一起锁死。
+ */
+async function awaitOutputs(opts: ComfyGenOpts, promptId: string): Promise<string[]> {
+  const signal = opts.signal;
+  const totalMs = opts.timeoutMs ?? 30 * 60_000;
+  const stallMs = opts.stallToleranceMs ?? 90_000;
+  const deadline = Date.now() + totalMs;
+  let unreachableSince: number | null = null;
+  let orphanStreak = 0;
+
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 2000));
-    // 单次轮询也要超时：ComfyUI 假死时不能让 job 永久挂在 running（local 车道串行会全线堵死）
-    const hist = await fetch(`${opts.comfyUrl}/history/${prompt_id}`, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
-    if (!hist || !hist.ok) continue;
-    const j = (await hist.json()) as Record<string, any>;
-    const entry = j[prompt_id];
-    if (!entry) continue;
-    if (entry.status?.status_str === "error") {
-      const msgs = JSON.stringify(entry.status?.messages ?? []).slice(0, 500);
-      throw new Error(`ComfyUI 执行出错: ${msgs}`);
+    await sleep(opts.pollIntervalMs ?? 2000, signal);
+    // 单次轮询也要超时：ComfyUI 假死时不能让 job 永久挂在 running
+    const hist = await fetch(`${opts.comfyUrl}/history/${promptId}`, { signal: reqSignal(15_000, signal) }).catch(() => null);
+    if (!hist || !hist.ok) {
+      unreachableSince ??= Date.now();
+      const downFor = Date.now() - unreachableSince;
+      if (downFor >= stallMs) {
+        throw new Error(
+          `ComfyUI 连续 ${Math.round(downFor / 1000)} 秒不可达（可能已崩溃或被关闭），任务中止。等服务恢复后重新出图即可，已出的产物都还在。`,
+        );
+      }
+      continue;
     }
-    if (entry.outputs && Object.keys(entry.outputs).length > 0) {
-      return await collectOutputs(opts, entry.outputs);
+    unreachableSince = null;
+
+    const entry = ((await hist.json().catch(() => ({}))) as Record<string, any>)[promptId];
+    if (entry) {
+      orphanStreak = 0;
+      if (entry.status?.status_str === "error") {
+        const msgs = JSON.stringify(entry.status?.messages ?? []).slice(0, 500);
+        throw new Error(`ComfyUI 执行出错: ${msgs}`);
+      }
+      if (entry.outputs && Object.keys(entry.outputs).length > 0) return await collectOutputs(opts, entry.outputs);
+      continue;
+    }
+
+    // 历史里没有本任务：服务活着，那它要么还在队列里，要么已经不存在了。
+    const queued = await promptInQueue(opts.comfyUrl, promptId, reqSignal(10_000, signal));
+    if (queued !== false) {
+      // true=还在排队/在跑；null=队列没问出来，不作判据
+      if (queued === true) orphanStreak = 0;
+      continue;
+    }
+    if (++orphanStreak >= ORPHAN_CONFIRMATIONS) {
+      throw new Error(
+        "ComfyUI 已重启或队列被清空，本任务提交的 prompt 在它那边已经不存在了，任务中止。重新出图即可。",
+      );
     }
   }
-  throw new Error("ComfyUI 生成超时");
+  throw new Error(`ComfyUI 生成超时：等了 ${Math.round(totalMs / 60_000)} 分钟仍未拿到产物，任务中止。`);
 }
 
 async function collectOutputs(opts: ComfyGenOpts, outputs: Record<string, any>): Promise<string[]> {
@@ -182,7 +299,7 @@ async function collectOutputs(opts: ComfyGenOpts, outputs: Record<string, any>):
     for (const f of files) {
       if (f.type && f.type !== "output") continue;
       const params = new URLSearchParams({ filename: f.filename, subfolder: f.subfolder ?? "", type: f.type ?? "output" });
-      const res = await fetch(`${opts.comfyUrl}/view?${params}`, { signal: AbortSignal.timeout(120_000) });
+      const res = await fetch(`${opts.comfyUrl}/view?${params}`, { signal: reqSignal(120_000, opts.signal) });
       if (!res.ok) continue;
       const buf = new Uint8Array(await res.arrayBuffer());
       const ext = (f.filename.match(/\.[a-z0-9]+$/i)?.[0] ?? ".png").toLowerCase();

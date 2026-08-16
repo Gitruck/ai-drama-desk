@@ -16,6 +16,8 @@ interface FalVideoOpts {
   outDir: string;
   outPrefix: string;
   timeoutMs?: number;
+  /** 用户中止信号：透传给全部 fetch，中止后不再等结果 */
+  signal?: AbortSignal;
 }
 
 function toDataUri(p: string): string {
@@ -33,6 +35,7 @@ export async function falVideoGenerate(opts: FalVideoOpts): Promise<string[]> {
   const submit = await fetch(`https://queue.fal.run/${opts.model}`, {
     method: "POST",
     headers,
+    signal: opts.signal,
     body: JSON.stringify({
       prompt: opts.prompt,
       negative_prompt: opts.negative,
@@ -53,16 +56,17 @@ export async function falVideoGenerate(opts: FalVideoOpts): Promise<string[]> {
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 3000));
-    const st = await fetch(statusUrl, { headers: { Authorization: headers.Authorization } });
+    opts.signal?.throwIfAborted();
+    const st = await fetch(statusUrl, { headers: { Authorization: headers.Authorization }, signal: opts.signal });
     if (!st.ok) continue;
     const js = (await st.json()) as { status: string };
     if (js.status === "COMPLETED") {
-      const res = await fetch(responseUrl, { headers: { Authorization: headers.Authorization } });
+      const res = await fetch(responseUrl, { headers: { Authorization: headers.Authorization }, signal: opts.signal });
       if (!res.ok) throw new Error(`fal 取结果失败: ${res.status} ${(await res.text()).slice(0, 300)}`);
       const body = (await res.json()) as any;
       const url: string | undefined = body?.video?.url ?? body?.videos?.[0]?.url;
       if (!url) throw new Error(`fal 响应里没有视频 URL: ${JSON.stringify(body).slice(0, 300)}`);
-      const dl = await fetch(url);
+      const dl = await fetch(url, { signal: opts.signal });
       if (!dl.ok) throw new Error(`fal 结果下载失败: ${dl.status}（结果链接可能已过期）`);
       const buf = new Uint8Array(await dl.arrayBuffer());
       const name = `${opts.outPrefix}.mp4`;

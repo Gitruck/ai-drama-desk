@@ -8,10 +8,14 @@ import { parseStoryboard, validateDoc } from "./lib/parse.ts";
 import {
   characterDir,
   createProject,
+  deleteProject,
   getProject,
   listCharacterRefs,
   listProjects,
   listShotOutputs,
+  ProjectError,
+  projectDeletionPreview,
+  reparseProject,
   sanitizeName,
   saveProject,
   setChoice,
@@ -29,7 +33,7 @@ import {
   StyleError,
   styleUsage,
 } from "./lib/styles.ts";
-import { dismissJobs, enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
+import { cancelJob, cancelProjectJobs, dismissJobs, enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
 import { exportProject } from "./lib/export.ts";
 import { diagnoseComfy } from "./lib/providers/comfyui.ts";
 import { deleteMediaOutput, MediaDeleteError, previewMediaDelete } from "./lib/media.ts";
@@ -158,6 +162,11 @@ function projectView(id: string) {
   }));
   const totalCost = Math.round(p.costLedger.reduce((a, c) => a + c.cost, 0) * 100) / 100;
   return { ...p, doc: { ...p.doc, characters }, shotsView: shots, totalCost };
+}
+
+/** 该项目在途（排队中/运行中）的任务 id；改 doc、切画风、删项目前都要先看它。 */
+function activeJobsOf(projectId: string): string[] {
+  return listJobs(projectId).filter((j) => j.status === "queued" || j.status === "running").map((j) => j.id);
 }
 
 /** 路径段解码：畸形百分号编码按 400 拒绝，不让 URIError 兜成 500。 */
@@ -308,6 +317,9 @@ export function createRequestHandler() {
         }
         if (!doc) return err("需要 storyboardMd（分镜稿 Markdown）或 doc（预解析 shots.json）");
         if (body.styleId && !getStyle(body.styleId)) return err("画风不存在", 404);
+        // dry-run：只解析、只校验，什么都不落盘。「确认」这个词只有在确认之前
+        // 什么都没发生时才成立——老流程是先建了项目再让用户确认警告。
+        if (body.dryRun === true) return json({ dryRun: true, doc, warnings });
         const p = createProject({
           name: body.name || doc.title || doc.beatId || "未命名",
           doc,
@@ -350,6 +362,31 @@ export function createRequestHandler() {
         if (body.name) p.name = body.name;
         saveProject(p);
         return json(projectView(p.id));
+      }
+
+      // 建错了怎么收场：要么就地重解析，要么整个删掉。两者都要先挡在途任务——
+      // 在跑的任务持着旧 doc 的镜号，也可能正往这个目录里写产物。
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/reparse$/);
+      if (m && req.method === "POST") {
+        const busy = activeJobsOf(m[1]);
+        if (busy.length > 0) return err("项目仍有生成任务在途，先中止或等它跑完再重解析", 409, "CONFLICT", { jobs: busy });
+        const result = reparseProject(m[1]);
+        return json({ ...result, project: projectView(result.project.id) });
+      }
+
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/deletion-preview$/);
+      if (m && req.method === "GET") return json(projectDeletionPreview(m[1]));
+
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)$/);
+      if (m && req.method === "DELETE") {
+        const body = (await req.json().catch(() => ({}))) as { confirmed?: boolean };
+        if (body.confirmed !== true) return err("永久删除需要 confirmed=true", 400);
+        const busy = activeJobsOf(m[1]);
+        if (busy.length > 0) return err("项目仍有生成任务在途，先中止再删除", 409, "CONFLICT", { jobs: busy });
+        const deleted = deleteProject(m[1]);
+        // 该项目的已结束任务记录一并清掉，别在别的页面留幽灵横幅
+        dismissJobs({ projectId: m[1] });
+        return json({ deleted });
       }
 
       m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/characters\/(.+)\/refs$/);
@@ -464,7 +501,20 @@ export function createRequestHandler() {
         return json(listJobs(url.searchParams.get("project") ?? undefined));
       }
 
-      // 清掉已结束任务记录（失败/告警横幅据此渲染）。只清 done/error，在跑的不动。
+      // 中止在途任务：queued 直接取消，running 走 abort 并回收 ComfyUI 侧的 prompt。
+      if (path === "/api/jobs/cancel" && req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { project?: unknown };
+        if (typeof body.project !== "string" || !body.project) return err("需要 project");
+        const canceled = cancelProjectJobs(body.project);
+        return json({ ok: true, canceled: canceled.length, jobs: canceled });
+      }
+      m = path.match(/^\/api\/jobs\/([^/]+)\/cancel$/);
+      if (m && req.method === "POST") {
+        const job = cancelJob(decodePathSegment(m[1]));
+        return job ? json(job) : err("任务不存在", 404);
+      }
+
+      // 清掉已结束任务记录（失败/告警横幅据此渲染）。只清 done/error/canceled，在跑的不动。
       if (path === "/api/jobs/dismiss" && req.method === "POST") {
         const body = await req.json().catch(() => ({}) as any); // 全清时可以不带 body
         const ids = Array.isArray(body?.ids) ? body.ids.filter((x: unknown) => typeof x === "string") : undefined;
@@ -502,6 +552,7 @@ export function createRequestHandler() {
       return serveFile(staticTarget);
     } catch (e) {
       if (e instanceof MediaDeleteError) return err(e.message, e.status, e.code, e.details);
+      if (e instanceof ProjectError) return err(e.message, e.status, e.code, e.details);
       if (e instanceof StyleError) return err(e.message, e.status, e.code, e.details);
       if (e instanceof LoraManagerError) return err(e.message, e.status, e.code, e.details);
       if (e instanceof CharacterReferenceError) return err(e.message, e.status, e.code, e.details);

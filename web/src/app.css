@@ -269,6 +269,16 @@ button.warn-dismiss:active { transform: none; }
 .import-fields { grid-template-columns: 1fr 1fr 1fr; margin-bottom: 14px; }
 .storyboard-field { font-size: 12px; }
 .md-input { width: 100%; min-height: 340px; resize: vertical; }
+.preview-card { display: grid; gap: 10px; margin-top: 14px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-soft); }
+.preview-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.preview-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.preview-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 12px; }
+.preview-row > span:first-child { color: var(--dim); font-size: 11px; line-height: 1.7; }
+.preview-row > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.preview-chip { padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); font-size: 11px; }
+.preview-empty { color: var(--bad); font-size: 11px; line-height: 1.7; }
+.preview-shots { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 11px; }
+.preview-shots b { margin-right: 5px; font-variant-numeric: tabular-nums; }
 .workflow-steps { display: grid; gap: 0; margin: 4px 0 18px; padding: 0; list-style: none; counter-reset: flow; }
 .workflow-steps li { position: relative; display: grid; gap: 2px; min-height: 62px; padding: 8px 0 9px 39px; counter-increment: flow; }
 .workflow-steps li:not(:last-child)::after { position: absolute; top: 34px; bottom: -6px; left: 14px; width: 1px; background: var(--line-strong); content: ""; }
@@ -284,7 +294,23 @@ button.warn-dismiss:active { transform: none; }
 .toolbar-divider { width: 1px; height: 40px; background: var(--line); }
 .toolbar-cta { white-space: nowrap; }
 .jobs-bar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 12px 0; padding: 10px 12px; border: 1px solid #d7c8a4; border-radius: 9px; background: #faf0d9; }
-.job-chip { padding: 3px 8px; border-radius: 99px; background: rgba(255,255,255,.72); font-size: 11px; }
+.job-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px 3px 8px; border-radius: 99px; background: rgba(255,255,255,.72); font-size: 11px; }
+/* 全局 button 的 min-height:40px / padding:8px 14px 会把 chip 撑成竖椭圆，按 .warn-dismiss 的解法压掉 */
+button.job-chip-cancel {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1;
+  opacity: .45;
+}
+button.job-chip-cancel:hover { border: 0; background: rgba(0,0,0,.09); opacity: 1; }
+button.job-chip-cancel:active { transform: none; }
 .char-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; }
 .char-card { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .char-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
@@ -404,6 +430,10 @@ button.warn-dismiss:active { transform: none; }
 /* Overlay */
 .overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(28,30,26,.58); backdrop-filter: blur(3px); }
 .modal { width: min(760px, 100%); max-height: 84vh; padding: 24px 26px; overflow-y: auto; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: var(--shadow-md); }
+.delete-modal { width: min(400px, 100%); }
+.delete-modal h3 { margin: 0 0 6px; }
+.delete-tally { display: grid; gap: 3px; margin: 12px 0 16px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 9px; background: var(--bad-soft); list-style: none; font-size: 12px; }
+.delete-tally b { font-variant-numeric: tabular-nums; }
 .character-ref-modal { width: min(980px, 100%); }
 .generation-source-picker { display: flex; gap: 8px; margin: 14px 0; padding-bottom: 4px; overflow-x: auto; }
 .generation-source-picker button { display: grid; flex: 0 0 102px; gap: 4px; padding: 5px; background: var(--surface-soft); }

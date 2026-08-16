@@ -102,7 +102,8 @@ export interface StoryboardDoc {
 }
 
 export type JobKind = "keyframe" | "video" | "charref";
-export type JobStatus = "queued" | "running" | "done" | "error";
+/** canceled 与 done / error 并列，同属「已结束」——用户主动中止不是失败，不该进失败横幅。 */
+export type JobStatus = "queued" | "running" | "done" | "error" | "canceled";
 export type CharRefMode = "single" | "turnaround";
 
 export interface GenJob {
@@ -235,6 +236,12 @@ export interface StudioConfig {
   /** 单镜默认视频秒数兜底（分镜稿无建议秒数时） */
   defaultShotSec: number;
   /**
+   * ComfyUI 连续不可达多久判本地任务失速（毫秒）。
+   * 留窗是为了不让偶发抖动打断真在跑的长片；到点即快失败，
+   * 而不是一路等到 30 分钟总超时——那期间本地车道与 GPU 租约全被僵尸任务锁死。
+   */
+  comfyStallToleranceMs: number;
+  /**
    * 导出回轨包时是否保留片段自带音轨。默认 false（剥离）。
    * H3 出片必带原生立体声（音频与画面在同一次去噪里联合生成，关不掉），
    * 垫在口播下面会叠声；剥离走 ffmpeg 流拷贝，不重编码、不动画面。
@@ -332,5 +339,6 @@ export const DEFAULT_CONFIG: StudioConfig = {
     "mock-video": 0,
   },
   defaultShotSec: 5,
+  comfyStallToleranceMs: 90_000,
   exportKeepAudio: false,
 };

@@ -91,7 +91,19 @@ export function App() {
             }}
           />
         )}
-        {view.kind === "project" && <ProjectBoard id={view.id} styles={styles} providers={health.providers ?? {}} refPolicies={health.refPolicies} />}
+        {view.kind === "project" && (
+          <ProjectBoard
+            id={view.id}
+            styles={styles}
+            providers={health.providers ?? {}}
+            refPolicies={health.refPolicies}
+            onChanged={refresh}
+            onDeleted={() => {
+              setView({ kind: "home" });
+              refresh();
+            }}
+          />
+        )}
         {view.kind === "styles" && <StylesPage styles={styles} onChanged={refresh} />}
         {view.kind === "lora" && <LoraPage styles={styles} onStylesChanged={refresh} />}
         {view.kind === "settings" && <SettingsPage />}
@@ -194,8 +206,7 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [styleId, setStyleId] = useState<string>("");
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ doc: any; warnings: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -203,25 +214,37 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
     if (styles.length && !styleId) setStyleId(styles[0].id);
   }, [styles, styleId]);
 
-  const submit = async () => {
+  const body = () => ({ storyboardMd: md, name: name || undefined, slug: slug || undefined, styleId: styleId || undefined });
+
+  // 输入一动预览就作废：拿旧预览建新稿是最容易发生、也最难自查的错
+  const edit = <T,>(setter: (v: T) => void) => (value: T) => {
+    setPreview(null);
+    setter(value);
+  };
+
+  const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
     try {
-      const res = await api.createProject({ storyboardMd: md, name: name || undefined, slug: slug || undefined, styleId: styleId || undefined });
-      const ws = res.warnings ?? [];
-      if (ws.length === 0) {
-        onCreated(res.project.id);
-      } else {
-        // 有解析警告时留在本页展示，用户确认后再进项目（直接跳转会把警告闪没）
-        setWarnings(ws);
-        setCreatedId(res.project.id);
-      }
+      await fn();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
+
+  const doPreview = () =>
+    run(async () => {
+      const res = await api.previewProject(body());
+      setPreview({ doc: res.doc, warnings: res.warnings ?? [] });
+    });
+
+  const doCreate = () =>
+    run(async () => {
+      const res = await api.createProject(body());
+      onCreated(res.project.id);
+    });
 
   return (
     <div className="panel import-page">
@@ -237,21 +260,21 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
             <span className="step-badge">01</span>
           </div>
           <div className="form-grid import-fields">
-            <label>工程名 <span>可空，取分镜稿标题</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：过拟合" /></label>
-            <label>导出 slug <span>小写字母、数字和短横线</span><input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="如：overfit-ep12" /></label>
-            <label>画风档案 <span>项目创建后仍可切换</span><select value={styleId} onChange={(e) => setStyleId(e.target.value)}><option value="">（暂不选择）</option>{styles.map((s) => <option key={s.id} value={s.id}>{s.name}{s.lora ? " · LoRA" : ""}</option>)}</select></label>
+            <label>工程名 <span>可空，取分镜稿标题</span><input value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder="如：过拟合" /></label>
+            <label>导出 slug <span>小写字母、数字和短横线</span><input value={slug} onChange={(e) => edit(setSlug)(e.target.value)} placeholder="如：overfit-ep12" /></label>
+            <label>画风档案 <span>项目创建后仍可切换</span><select value={styleId} onChange={(e) => edit(setStyleId)(e.target.value)}><option value="">（暂不选择）</option>{styles.map((s) => <option key={s.id} value={s.id}>{s.name}{s.lora ? " · LoRA" : ""}</option>)}</select></label>
           </div>
           <label className="storyboard-field">
             分镜稿 Markdown
-            <textarea className="md-input" value={md} onChange={(e) => setMd(e.target.value)} placeholder="# AI 再现分镜稿 · ……（beat B17）&#10;……" />
+            <textarea className="md-input" value={md} onChange={(e) => edit(setMd)(e.target.value)} placeholder="# AI 再现分镜稿 · ……（beat B17）&#10;……" />
           </label>
           <div className="form-actions">
-            <button className="primary" disabled={busy || !md.trim() || createdId != null} onClick={submit}>{busy ? "解析中…" : "解析并建立项目"}</button>
-            <span className="dim small">解析只建立本地项目，不会立即调用模型。</span>
-            {createdId && <button className="primary" onClick={() => onCreated(createdId)}>确认警告并进入项目 →</button>}
+            <button disabled={busy || !md.trim()} onClick={doPreview}>{busy ? "解析中…" : "解析预览"}</button>
+            <button className="primary" disabled={busy || !preview} onClick={doCreate} title={preview ? "" : "先解析预览，看清解析结果再建"}>建立项目 →</button>
+            <span className="dim small">预览只解析、不落盘；建立项目也不会立即调用模型。</span>
           </div>
           {error && <div className="warn bad">{error}</div>}
-          {warnings.map((w, i) => <div key={i} className="warn">⚠ {w}</div>)}
+          {preview && <PreviewSummary doc={preview.doc} warnings={preview.warnings} />}
         </section>
         <aside className="workflow-card">
           <div className="section-heading"><div><h2>接下来会发生什么</h2><p>先把流程跑通，再逐步提升每一镜的质量。</p></div><span className="step-badge muted">指南</span></div>
@@ -268,12 +291,73 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
   );
 }
 
-function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styles: any[]; providers: Record<string, boolean>; refPolicies?: Record<string, any> }) {
+/** 解析预览摘要：够用户判断「这稿子解析对了没有」——尤其是角色名单，漏角色一致性就没了。 */
+function PreviewSummary({ doc, warnings }: { doc: any; warnings: string[] }) {
+  return (
+    <div className="preview-card">
+      <div className="preview-head">
+        <b>解析预览</b>
+        <span className="dim small">还没有建立项目，磁盘上什么都没写</span>
+      </div>
+      <div className="preview-meta">
+        <span className="meta-pill">beat {doc.beatId || "未解析到"}</span>
+        <span className="meta-pill">{doc.shots.length} 镜</span>
+        <span className="meta-pill">{projectRangeText(doc).replace(/。$/, "")}</span>
+      </div>
+      <div className="preview-row">
+        <span>角色</span>
+        <div>
+          {doc.characters.length === 0
+            ? <b className="preview-empty">未解析到角色</b>
+            : doc.characters.map((c: any) => <span key={c.name} className="preview-chip">{c.name}</span>)}
+        </div>
+      </div>
+      <div className="preview-row">
+        <span>镜头</span>
+        <ol className="preview-shots">
+          {doc.shots.map((s: any) => (
+            <li key={s.index}>
+              <b>s{String(s.index).padStart(2, "0")}</b> {s.title || "（无标题）"}
+              <span className="dim"> · {s.durationSec == null ? "缺秒数" : `≈${s.durationSec}s`}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+      {warnings.map((w, i) => <div key={i} className="warn">⚠ {w}</div>)}
+    </div>
+  );
+}
+
+/** 任务标签：charref 走角色名，`s0 片` 那种哨兵写法在中止按钮旁边只会让人不敢点。 */
+function jobLabel(j: any): string {
+  if (j.kind === "charref") return `${j.charName ?? "角色"} 人设图`;
+  return `s${j.shotIndex} ${j.kind === "keyframe" ? "图" : "片"}`;
+}
+
+/** 时码元信息可能整段缺失（稿件没写、或写法解析不到）——缺了就少说一句，别把 undefined 拼给用户看。 */
+function projectRangeText(doc: any): string {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const [st, ed, total] = [num(doc.trackSt), num(doc.trackEd), num(doc.totalSec)];
+  const shots = `共 ${doc.shots.length} 镜`;
+  if (st != null && ed != null && total != null) return `时间区间 ${st}s → ${ed}s，约 ${total}s，${shots}。`;
+  if (total != null) return `约 ${total}s，${shots}。`;
+  return `${shots}（分镜稿未给出时间区间）。`;
+}
+
+function ProjectBoard({
+  id, styles, providers, refPolicies, onChanged, onDeleted,
+}: {
+  id: string; styles: any[]; providers: Record<string, boolean>; refPolicies?: Record<string, any>;
+  onChanged: () => void; onDeleted: () => void;
+}) {
   const [p, setP] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
   const [kfProvider, setKfProvider] = useState("comfyui-image");
   const [vidProvider, setVidProvider] = useState("comfyui-video");
   const [manifest, setManifest] = useState<any>(null);
+  const [reparsed, setReparsed] = useState<any>(null);
+  const [deletion, setDeletion] = useState<any>(null);
+  const [actionError, setActionError] = useState("");
   const timer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const ready = (pid: string) => providers[pid] !== false; // 未知(健康接口还没回)时不拦
@@ -289,7 +373,7 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
     return () => clearInterval(timer.current);
   }, [refresh]);
 
-  // 关掉横幅 = 清掉这些已结束任务的记录（服务端只清 done/error，在跑的不受影响）
+  // 关掉横幅 = 清掉这些已结束任务的记录（服务端只清已结束的，在跑的不受影响）
   const dismiss = useCallback(
     async (ids: string[]) => {
       await api.dismissJobs({ project: id, ids });
@@ -298,10 +382,60 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
     [id],
   );
 
+  // 中止在途任务：本地车道串行，一条僵尸就锁死全线，这是唯一的解锁手段
+  const cancel = useCallback(
+    async (ids: string[]) => {
+      await Promise.all(ids.map((jobId) => api.cancelJob(jobId)));
+      setJobs(await api.jobs(id));
+    },
+    [id],
+  );
+  const cancelAll = useCallback(async () => {
+    await api.cancelProjectJobs(id);
+    setJobs(await api.jobs(id));
+  }, [id]);
+
+  // 解析器修好之后，老项目的 doc 还是当初固化下来的那份——重解析是唯一不丢产物的修法
+  const reparse = useCallback(async () => {
+    setActionError("");
+    try {
+      const res = await api.reparseProject(id);
+      setReparsed(res);
+      setP(res.project);
+      onChanged();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
+  }, [id, onChanged]);
+
+  const askDelete = useCallback(async () => {
+    setActionError("");
+    try {
+      setDeletion(await api.projectDeletionPreview(id));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
+  }, [id]);
+
+  const confirmDelete = useCallback(async () => {
+    try {
+      await api.deleteProject(id);
+      setDeletion(null);
+      onDeleted();
+    } catch (e) {
+      setDeletion(null);
+      setActionError(e instanceof Error ? e.message : String(e));
+    }
+  }, [id, onDeleted]);
+
   const active = useMemo(() => jobs.filter((j) => j.status === "queued" || j.status === "running"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "error"), [jobs]);
-  // 参考预算裁减等非致命告警（如角色超预算被裁）：成功任务也要浮出来，不静默
-  const warned = useMemo(() => jobs.filter((j) => (j.warnings?.length ?? 0) > 0 && j.status !== "error"), [jobs]);
+  // 参考预算裁减等非致命告警（如角色超预算被裁）：成功任务也要浮出来，不静默。
+  // 被用户中止的任务不再提醒——它的产物本来就不要了。
+  const warned = useMemo(
+    () => jobs.filter((j) => (j.warnings?.length ?? 0) > 0 && j.status !== "error" && j.status !== "canceled"),
+    [jobs],
+  );
   const style = p ? styles.find((s) => s.id === p.styleId) : undefined;
   const selectedProviderState = keyframeProviderState(kfProvider, providers, style);
 
@@ -316,14 +450,24 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
       <PageHeader
         eyebrow={`项目 · beat ${p.doc.beatId}`}
         title={p.name}
-        description={`时间区间 ${p.doc.trackSt}s → ${p.doc.trackEd}s，约 ${p.doc.totalSec}s，共 ${p.doc.shots.length} 镜。`}
+        description={projectRangeText(p.doc)}
         meta={<>
           <ProjectIdCopy id={p.id} />
           <span className="meta-pill">{p.doc.shots.length} 个镜头</span>
           <span className={`meta-pill ${style?.lora ? "success" : ""}`}>LoRA {style?.lora ? "已绑定" : "未绑定"}</span>
           <span className="meta-pill">累计成本 ¥{p.totalCost}</span>
         </>}
-        actions={<button onClick={async () => { setManifest(await api.exportProject(id)); refresh(); }}>导出回轨包</button>}
+        actions={<>
+          <button
+            onClick={reparse}
+            disabled={active.length > 0}
+            title={active.length > 0 ? "有任务在途，跑完或中止后再重解析" : "按项目里保存的原始分镜稿重跑解析器，已出的图和片都保留"}
+          >
+            重新解析
+          </button>
+          <button onClick={async () => { setManifest(await api.exportProject(id)); refresh(); }}>导出回轨包</button>
+          <button className="danger" onClick={askDelete} title="删除整个项目（连同已出的图和片）">删除项目</button>
+        </>}
       />
 
       <section className="project-toolbar surface-card">
@@ -370,12 +514,22 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
 
       {active.length > 0 && (
         <div className="jobs-bar">
-          {active.length} 个任务进行中：
+          <span>{active.length} 个任务进行中：</span>
           {active.map((j) => (
             <span key={j.id} className="job-chip">
-              s{j.shotIndex} {j.kind === "keyframe" ? "图" : "片"} · {j.status === "running" ? "生成中" : "排队"}
+              {jobLabel(j)} · {j.status === "running" ? "生成中" : "排队"}
+              <button
+                type="button"
+                className="job-chip-cancel"
+                title="中止这个任务"
+                aria-label={`中止 ${jobLabel(j)}`}
+                onClick={() => cancel([j.id])}
+              >
+                ✕
+              </button>
             </span>
           ))}
+          <button type="button" className="mini" onClick={cancelAll}>全部中止</button>
         </div>
       )}
       {failed.length > 0 && (
@@ -417,6 +571,9 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
         </div>
       )}
 
+      {actionError && <div className="warn bad">{actionError}</div>}
+      {reparsed && <ReparseSummary result={reparsed} onClose={() => setReparsed(null)} />}
+
       <section className="page-section character-section">
         <div className="section-heading">
           <div><h2>角色资产</h2><p>源图两个参考集共享；喂法随当前 Keyframe 引擎自动切换。</p></div>
@@ -434,6 +591,62 @@ function ProjectBoard({ id, styles, providers, refPolicies }: { id: string; styl
       </section>
 
       {manifest && <ManifestView manifest={manifest} pid={id} onClose={() => setManifest(null)} />}
+      {deletion && <DeleteProjectModal preview={deletion} onCancel={() => setDeletion(null)} onConfirm={confirmDelete} />}
+    </div>
+  );
+}
+
+/** 重解析结果：变了什么、失效了什么、留下什么孤儿，全说清楚，不替用户扫地。 */
+function ReparseSummary({ result, onClose }: { result: any; onClose: () => void }) {
+  const list = (label: string, items: any[], hint?: string) =>
+    items.length > 0 && (
+      <div className="preview-row">
+        <span>{label}</span>
+        <div>
+          {items.map((x) => <span key={String(x)} className="preview-chip">{String(x)}</span>)}
+          {hint && <small className="dim">{hint}</small>}
+        </div>
+      </div>
+    );
+  const nothing =
+    result.addedCharacters.length === 0 && result.removedCharacters.length === 0 &&
+    result.addedShots.length === 0 && result.removedShots.length === 0;
+
+  return (
+    <div className="preview-card">
+      <div className="preview-head">
+        <b>已按原始分镜稿重解析</b>
+        <button className="mini" onClick={onClose}>关闭</button>
+      </div>
+      {nothing && <div className="dim small">解析结果与原来一致，没有任何变化。</div>}
+      {list("新增角色", result.addedCharacters)}
+      {list("消失角色", result.removedCharacters)}
+      {list("新增镜", result.addedShots.map((i: number) => `s${String(i).padStart(2, "0")}`))}
+      {list("消失镜", result.removedShots.map((i: number) => `s${String(i).padStart(2, "0")}`))}
+      {list("失效选择", result.staleChoices, "这些镜号已不存在，选择记录留着不影响出片")}
+      {list("孤儿角色目录", result.orphanCharacterDirs, "多半是角色改了名；源图仍在磁盘上，没有自动删")}
+      {result.warnings.map((w: string, i: number) => <div key={i} className="warn">⚠ {w}</div>)}
+    </div>
+  );
+}
+
+/** 删除确认：先把代价摆出来。这是唯一会带走已出产物的操作。 */
+function DeleteProjectModal({ preview, onCancel, onConfirm }: { preview: any; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="overlay" onClick={onCancel}>
+      <div className="modal delete-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>删除项目「{preview.name}」？</h3>
+        <p className="dim small">这一步不可逆，会连同下面这些产物一起删掉：</p>
+        <ul className="delete-tally">
+          <li><b>{preview.keyframes}</b> 张 Keyframe</li>
+          <li><b>{preview.videos}</b> 条视频</li>
+          <li><b>{preview.characterRefs}</b> 张角色源图</li>
+        </ul>
+        <div className="form-actions">
+          <button onClick={onCancel}>取消</button>
+          <button className="danger" onClick={onConfirm}>确认删除</button>
+        </div>
+      </div>
     </div>
   );
 }
