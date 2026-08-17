@@ -708,6 +708,8 @@ function ShotCard({
   onChanged: () => void;
 }) {
   const [preview, setPreview] = useState<{ kind: "keyframe" | "video"; idx: number } | null>(null);
+  // 服务端算好的悬空标记：选中项已不在候选里（产物被删/清盘/换机器），只提示不代改
+  const dangling: { keyframe?: string; video?: string } = shot.danglingChoices ?? {};
   const gen = async (kind: "keyframe" | "video", provider: string) => {
     await api.generate(p.id, shot.index, kind, provider);
     onChanged();
@@ -749,6 +751,11 @@ function ShotCard({
               {shot.keyframes.length ? "重 roll" : "出图"}
             </button>
           </div>
+          {dangling.keyframe && (
+            <div className="dangling" title={`选中的「${dangling.keyframe}」已不在候选中——文件可能被删或换过机器。选择本身没丢，把文件放回即可恢复。`}>
+              ⚠️ 选中项已丢失：{dangling.keyframe}
+            </div>
+          )}
           <div className="thumbs">
             {shot.keyframes.map((f: string, i: number) => (
               <div className="media-item" key={f}>
@@ -773,6 +780,11 @@ function ShotCard({
               {shot.videos.length ? "重 roll" : "出片"}
             </button>
           </div>
+          {dangling.video && (
+            <div className="dangling" title={`选中的「${dangling.video}」已不在候选中。导出会回落到该镜其余候选；没有候选则跳过这一镜。`}>
+              ⚠️ 选中项已丢失：{dangling.video}
+            </div>
+          )}
           <div className="thumbs">
             {shot.videos.map((f: string, i: number) => (
               <div className="media-item" key={f}>
@@ -830,7 +842,22 @@ function ManifestView({ manifest, pid, onClose }: { manifest: any; pid: string; 
           目录：data/projects/{pid}/exports/aidrama/ ｜ 建议 {manifest.totalSuggestedSec}s / 实测{" "}
           {manifest.totalMeasuredSec}s ｜ 成本 ¥{manifest.totalCost}
         </p>
-        {manifest.skipped.length > 0 && <div className="warn">未导出（无视频）：s{manifest.skipped.join("、s")}</div>}
+        {manifest.items.some((i: any) => i.fallbackFrom) && (
+          <div className="warn">
+            <b>以下镜的选中产物已丢失，本次回落到了其余候选</b>——不是你挑的那条，可回工作台重挑或重出：
+            <ul>
+              {manifest.items.filter((i: any) => i.fallbackFrom).map((i: any) => (
+                <li key={i.shotIndex}>s{i.shotIndex}：原选中「{i.fallbackFrom}」已不在盘上 → 本次用了「{i.sourceFile}」</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {manifest.skippedDetail?.length > 0 && (
+          <div className="warn bad">
+            <b>未导出的分镜</b>
+            <ul>{manifest.skippedDetail.map((d: any) => <li key={d.shotIndex}>{d.reason}</li>)}</ul>
+          </div>
+        )}
         <table>
           <thead>
             <tr>
@@ -845,7 +872,7 @@ function ManifestView({ manifest, pid, onClose }: { manifest: any; pid: string; 
             {manifest.items.map((i: any) => (
               <tr key={i.shotIndex}>
                 <td>s{i.shotIndex}</td>
-                <td>{i.file}</td>
+                <td>{i.file}{i.fallbackFrom && <span className="dim small"> ⚠️回落</span>}</td>
                 <td>{i.suggestedSec ?? "-"}s</td>
                 <td>{i.measuredSec?.toFixed(2)}s</td>
                 <td className={Math.abs(i.deltaSec ?? 0) > 1 ? "bad" : ""}>{i.deltaSec}s</td>

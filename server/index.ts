@@ -145,13 +145,17 @@ function serveFile(absPath: string): Response {
 function projectView(id: string) {
   const p = getProject(id);
   if (!p) return null;
-  const shots = p.doc.shots.map((shot) => ({
-    ...shot,
-    key: shotKey(shot.index),
-    keyframes: listShotOutputs(id, "keyframes", shot.index),
-    videos: listShotOutputs(id, "videos", shot.index),
-    choices: p.choices[shotKey(shot.index)] ?? {},
-  }));
+  const shots = p.doc.shots.map((shot) => {
+    const keyframes = listShotOutputs(id, "keyframes", shot.index);
+    const videos = listShotOutputs(id, "videos", shot.index);
+    const choices = p.choices[shotKey(shot.index)] ?? {};
+    // 悬空选中：choices 是 project.json 里的持久指针，产物被删/清盘/换机器后会指空。
+    // 只如实打标让候选墙看得见，绝不代用户改写 choices（同「孤儿如实上报、绝不自动删」）。
+    const danglingChoices: { keyframe?: string; video?: string } = {};
+    if (choices.keyframe && !keyframes.includes(choices.keyframe)) danglingChoices.keyframe = choices.keyframe;
+    if (choices.video && !videos.includes(choices.video)) danglingChoices.video = choices.video;
+    return { ...shot, key: shotKey(shot.index), keyframes, videos, choices, danglingChoices };
+  });
   const characters = p.doc.characters.map((c) => ({
     ...c,
     dirName: sanitizeName(c.name),

@@ -140,10 +140,16 @@ data/projects/<id>/exports/aidrama/
 └── manifest.md                   # 人读同款
 ```
 
-manifest 关键字段：`items[]`（每镜文件名、建议秒数 vs ffprobe 实测、差值 deltaSec、分辨率/fps）、
-`skipped[]`（没有可导出视频的镜序号）、`totalSuggestedSec/totalMeasuredSec`、`totalCost`（云生成成本台账）、
+manifest 关键字段：`items[]`（每镜文件名、源候选名 `sourceFile`、建议秒数 vs ffprobe 实测、差值 deltaSec、
+分辨率/fps、`fallbackFrom`）、`skipped[]`（没有产出导出文件的镜序号）、`skippedDetail[]`（与 `skipped` 同序，
+逐条给出中文 `reason` 与丢失的 `lostChoice`）、`totalSuggestedSec/totalMeasuredSec`、`totalCost`（云生成成本台账）、
 `trackSt/trackEd`（分镜稿声明的回轨区间）。**回轨是手工环节**：由用户把片段拖进自己的 NLE 按区间对齐，
 agent 只负责把差值大、被 skip 的镜明确点名。
+
+**悬空选中**：`choices` 是 `project.json` 里的持久指针，产物被删/清盘/换机器后会指向已不在盘上的文件。
+导出遇到这种镜**不会整包失败**——有其余候选就回落（该条 `fallbackFrom` 记下丢失的原选中名，`sourceFile`
+是这次实际用的候选），没有候选就计入 `skipped` 并在 `skippedDetail` 里说明。工作台**不会替用户改写
+`choices`**：把文件放回原处，下次导出自动恢复按原选中项走。
 
 ---
 
@@ -161,8 +167,8 @@ agent 只负责把差值大、被 skip 的镜明确点名。
    报状态、转告 warnings（缺秒数/缺角色/超预算裁减点名等），不替用户拍审美。
 6. **轮询与交代**：`/jobs` 轮询到全 done；失败逐条报错因（模板未配 / 模型缺失 / 服务离线），
    引导对应修复（`/diagnostics/comfyui`、README 模型清单、`data/config.json`）。
-7. **导出后读 manifest 再说话**：deltaSec 偏差大的镜、skipped 的镜、totalCost——如实转告；
-   不要只说「导出成功」。
+7. **导出后读 manifest 再说话**：deltaSec 偏差大的镜、`skippedDetail` 的逐条原因、`fallbackFrom`
+   的回落镜、totalCost——如实转告；不要只说「导出成功」。回落的镜要点名「这不是用户挑的那条」。
 
 ---
 
@@ -214,7 +220,8 @@ curl -X POST "$API_BASE/projects/$PROJECT_ID/export"
 | 出场角色被裁减告警 | 引擎参考预算所限（A/B 档 3 张、Seedream 10 张）→ 转告用户被点名的角色，让用户调整参考集 |
 | LoRA 一直 `blocked` | 本地生成队列占着 GPU 租约 / ComfyUI `/queue` 有任务 / 外部进程占显存 → 排空再跑 |
 | 服务重启后训练任务变 `recoverable` | 不假定还在跑；`lora resume <id>` 从最新 checkpoint 续 |
-| 导出 manifest 有 `skipped` | 对应镜没有任何视频产物 → 先补出片再重新导出 |
+| 导出 manifest 有 `skipped` | 读 `skippedDetail[].reason`：没有任何视频产物 → 先补出片再重新导出；选中产物已丢失且无其余候选 → 该镜必须重新出片 |
+| manifest 报「选中产物已丢失，已回落」 | 悬空选中（产物被删/清盘/换机器，`choices` 指针还在）。片段可用但**不是用户挑的那条**——转告后让用户回工作台重挑或重出；把原文件放回该镜目录则下次导出自动恢复。工作台不会自动改 `choices` |
 
 ---
 

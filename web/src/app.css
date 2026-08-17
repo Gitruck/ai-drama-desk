@@ -351,6 +351,8 @@ button.job-chip-cancel:active { transform: none; }
 .media-head > span { display: flex; align-items: baseline; gap: 7px; }
 .media-head b { color: var(--ink); font-size: 12px; }
 .media-head small { color: var(--dim); font-size: 9px; }
+/* 悬空选中提示：沿用 .warn 的琥珀语义色，只是压成候选墙里的一行小字 */
+.dangling { margin-bottom: 8px; padding: 5px 8px; border: 1px solid #e8d5aa; border-radius: 6px; background: #faf0d9; color: #725d2c; font-size: 10px; overflow-wrap: anywhere; }
 .thumbs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .media-item { position: relative; display: flex; min-width: 0; }
 .thumbs img, .thumbs video { width: 100%; aspect-ratio: 16 / 9; border: 2px solid transparent; border-radius: 7px; background: #ddd8cc; object-fit: cover; cursor: pointer; transition: border-color .15s ease, transform .15s ease; }
