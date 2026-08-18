@@ -27,7 +27,8 @@
 ## 为什么用 ai-drama-desk
 
 - **分镜稿进、片段包出**：粘贴一份分镜稿 md → 结构化成分镜卡片 → 逐镜出图、出片、抽卡挑选 → 一键导出带 manifest 的回轨包，文件名即回轨定位（`<slug>-<beatId>-s<n>.mp4`）。
-- **本地开源模型的低成本产线**：Qwen-Image-Edit 出 keyframe 锁角色一致性，Wan2.2 / HunyuanVideo 1.5 蒸馏档 I2V 出片——24G 级显卡（如 4090）单机可跑；不想等本地 GPU 时切云端出口（fal / 火山方舟）。
+- **本地开源模型的低成本产线**：Qwen-Image-Edit 出 keyframe 锁角色一致性，Wan2.2 / HunyuanVideo 1.5 蒸馏档 I2V 出片——24G 级显卡（如 4090）单机可跑；不想等本地 GPU 时切云端出口（PixMind / fal / 火山方舟）。
+- **没有显卡也能用**：一把 PixMind Key 即可全云出片，默认线路 MiniMax H3 Eco **自带原生 32kHz 立体声**（480p $0.040/秒），拿到与本地 H3 档同样的音画同步能力，无需 40 GB 权重与 24 GB 显存。
 - **画风是资产，不是设定项**：画风档案（Style Lock + 负面栈 + 锚定参考图 + 可选 LoRA）独立建档、可导入导出风格包、可绑定你自己训练的 LoRA；换栏目 = 换画风档案，管线不变。
 - **零门槛试跑**：mock 引擎无 GPU、无模型、无云 Key（仅需本地 ffmpeg）即可端到端演练「导入 → 出图 → 出片 → 导出」，先跑通流程再逐步接真引擎。
 - **为 agent 而生**：Web UI 与 CLI 都是同一 HTTP API 的客户端；配套 skill 装进 Claude Code / Codex / Cursor 等 Agent 后，一句「把这份分镜稿投进工作台出片」即可驱动闭环。playbook 见 [`AGENT.md`](./AGENT.md)。
@@ -191,14 +192,26 @@ mypaths:
 
 ### e) 云端出口（可选）
 
-不想等本地 GPU、或某镜动作复杂本地抽不出来时，可切云端引擎。Key 填在 `data/config.json`（字段模板见仓根 [config.example.json](config.example.json)，首次启动会自动生成默认配置）：
+**没有本地 GPU 也能用**：全部四条云端出口都不需要本机显卡与模型权重，只要一把 API Key。不想等本地 GPU、或某镜动作复杂本地抽不出来时，也可临时切云端。Key 填在 `data/config.json`（字段模板见仓根 [config.example.json](config.example.json)，首次启动会自动生成默认配置）：
 
 | 出口 | 配置字段 | 说明 |
 |---|---|---|
-| fal.ai（I2V 出片） | `falKey` | 默认端点 Wan2.2 A14B I2V；每次生成计入成本台账 |
+| **PixMind（I2V 出片）** | `pixmindKey` | 默认 `minimax-h3-eco`，**出片自带原生 32kHz 立体声**——本地跑不动 H3 权重（约 40.5 GB + 24GB 显存）的用户走这条即可拿到同样的音画同步能力。默认 480p（$0.040/秒），可切 720p |
+| **PixMind（keyframe 出图）** | `pixmindKey` | 默认 `nano-banana-2-eco`，多图直喂（预算 14 张）；与出片共用同一把 Key |
+| fal.ai（I2V 出片） | `falKey` | 默认端点 Wan2.2 A14B I2V；出的是哑片 |
 | 火山方舟 Seedream（keyframe 出图） | `arkApiKey` | 多图直喂参考集（预算 10 张），适合直接吃三视图原图 |
 
-密钥只存本地 `data/config.json`（该目录不进 Git）；API 对外只返回「已配置」布尔值，不回显密钥。
+云端生成一律计入成本台账，导出时报累计成本。密钥只存本地 `data/config.json`（该目录不进 Git）；API 对外只返回「已配置」布尔值，不回显密钥。
+
+#### PixMind API Key 怎么拿
+
+1. 到 [pixmind.io](https://www.pixmind.io/) 注册登录（支持 Google 登录）。
+2. 进 [API Key 控制台](https://www.pixmind.io/api-platform/dashboard/keys) → **Create API Key**，只勾这条线路需要的图片 / 视频权限（最小权限原则）。Key 形如 `sk_live_…`，**只在创建时完整显示一次**，请立刻存好。
+3. 建议在控制台给单把 Key 配预算与限流上限；开发与生产各用一把，泄露即轮换。
+4. 到 [Billing](https://www.pixmind.io/api-platform/dashboard/billing) 充值（API 按量计费，与站内 Studio 积分分开结算）。
+5. 把 Key 填进工作台「设置与诊断」页配置 JSON 的 `pixmindKey`，保存后出图/出片下拉里的两个 PixMind 选项即可用。
+
+> 想先验 Key 是否可用，可在模型页的 Playground 直接跑一条（PixMind 声明不保存 Playground 里输入的 Key）。切换模型只需改 `pixmindVideoModel` / `pixmindImageModel`——同一套接入可切该平台全目录线路，无需改代码。
 
 ---
 
@@ -252,7 +265,7 @@ mypaths:
 1. **导入**：粘贴分镜稿 md → 解析成分镜卡片，解析告警逐条提示。
 2. **角色参考图**：每角色上传设定原图（只传一次，各参考集共享）。本地 ComfyUI A/B 档走**单人单图集**——裁剪画布上拖框裁出只含该角色的主参考；Seedream 走**多图直喂集**——默认全选、可点选排除。详见[使用手册](docs/使用手册.md)。
 3. **出图**：每镜 keyframe，单卡重 roll、点击选用。
-4. **出片**：选中 keyframe → I2V。出口：本地 ComfyUI（540p 抽卡档 / 480p 蒸馏档）/ fal 云 / mock。
+4. **出片**：选中 keyframe → I2V。出口：本地 ComfyUI（540p 抽卡档 / H3 带音轨档 / 480p 蒸馏档）/ PixMind 云（H3 Eco 带音轨）/ fal 云 / mock。
 5. **全自动补齐**：缺啥补啥（无图先出图再接力出片），本地 GPU 车道串行、云车道小并发。
 6. **导出回轨**：`<slug>-<beatId>-s<n>.mp4` 落 `exports/aidrama/`，manifest 含 ffprobe 实测时长 vs 建议秒数差值 + 成本台账。把满意的片段**拖回你的任意 NLE**（剪映 / Premiere / 达芬奇…）按 beat 区间对齐。
 
@@ -264,10 +277,12 @@ mypaths:
 | `comfyui-image`（A 档） | 出图 | 本地 ComfyUI | Qwen-Image-Edit-2511，角色参考图锁一致性 |
 | `comfyui-image2`（B 档） | 出图 | 本地 ComfyUI + 画风 LoRA | 画风由 LoRA 承担，需当前画风绑定 LoRA manifest |
 | `seedream-image` | 出图 | `arkApiKey` | 火山方舟 Seedream，多图直喂（预算 10 张） |
+| `pixmind-image` | 出图 | `pixmindKey` | PixMind 云出口，默认 Nano Banana 2 Eco，多图直喂（预算 14 张）；**零本地依赖** |
 | `comfyui-video` | 出片 | 本地 ComfyUI | Wan2.2 I2V 540p 抽卡档 |
 | `h3-video` | 出片 | 本地 ComfyUI ≥0.30 | MiniMax H3 I2V，4 步 Turbo；**出片自带原生 32kHz 立体声**，固定 24fps |
 | `hunyuan-video` | 出片 | 本地 ComfyUI | HunyuanVideo 1.5 480p 步数蒸馏档 |
 | `fal-video` | 出片 | `falKey` | fal.ai Wan2.2 A14B I2V，高动作镜头或赶工 |
+| `pixmind-video` | 出片 | `pixmindKey` | PixMind 云出口，默认 MiniMax H3 Eco，4–15 秒、480p/720p；**出片自带原生 32kHz 立体声、零本地依赖**，本地跑不动 H3 时走这条 |
 
 ## 画风资产
 

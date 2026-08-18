@@ -15,7 +15,8 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 - 接管已有项目前先 `GET <base>/health`，再 `GET <base>/projects/<project-id>`。两者成功就直接走 HTTP API，**不需要知道仓库路径，也不许为此扫描磁盘找仓库**。
 - API 不可达时先核对实际地址；服务确实未启动，就请用户在明确的工作台仓库/已安装发行物中启动，或提供准确路径。当前目录未知时不要直接执行 `bun run start`。
 - 输入：一份符合契约的分镜稿 md（最小结构见仓库 README「输入契约」节）。没有 → 先让用户准备分镜稿，别硬解析不合契约的文本。
-- 本地出图/出片需 ComfyUI（端口 8188）+ 模板与模型已配（见仓库 `templates/README.md` 与 README 模型清单）；没配时可先走 mock 或云端出口（fal / 火山方舟）。
+- 本地出图/出片需 ComfyUI（端口 8188）+ 模板与模型已配（见仓库 `templates/README.md` 与 README 模型清单）；没配时可先走 mock 或云端出口（PixMind / fal / 火山方舟）。
+- **用户没有本地 GPU / 跑不动 H3 权重时**：填一把 `pixmindKey` 即可全云闭环——出图 `pixmind-image`、出片 `pixmind-video`（MiniMax H3 Eco，自带原生立体声，默认 480p）。拿 Key 的步骤在 README，别代用户创建 Key。
 - 完整 API 面与决策清单见仓库根 `AGENT.md`（本 skill 是它的薄壳）。
 
 ## 已有项目接管（API-first）
@@ -67,7 +68,7 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 2. **备角色参考图（人设锚点）**（检查点）：角色一致性靠参考图 > 文字。三条路任选——① 用户已有设定图 → 工作台角色卡「上传」；② **工作台内生成（推荐，断档已补齐）**：调用 `/generate-ref`，`turnaround` 出三视图设定表、`single` 出单人立绘，产物直接落该角色源图库，即刻可挑可裁；缺画风/锚图/LoRA 也能出（A 档现成开源模型零前置兜底）；③ 外部工具（ChatGPT 等）出图后经 refs API 上传。本地 A/B 档挑一张在裁剪画布裁出单人主参考（三视图整图直喂给镜头有复制人物风险，故先裁）。出人设仍是检查点：挑图交用户。
 3. **出图批次**：`POST /api/v1/projects/<id>/shots/<n>/keyframe` 或全自动 `POST /api/v1/projects/<id>/auto`。轮询 `GET /api/v1/jobs?project=<id>` 到全 done，失败逐条报错因。
 4. **用户挑图**（检查点）：抽卡与选用在工作台点击完成，别替用户拍审美。
-5. **出片批次**：同 auto/逐镜。默认本地 ComfyUI；用户嫌某镜动作塌 → 换 `fal-video` 重 roll 该镜。
+5. **出片批次**：同 auto/逐镜。默认本地 ComfyUI；用户嫌某镜动作塌 → 换 `fal-video` 或 `pixmind-video` 重 roll 该镜（后者带原生音轨、无本地依赖）。
 6. **导出**：`POST /api/v1/projects/<id>/export` → 读 manifest 转告：实测 vs 建议时长差值、未导出的镜（skipped）、累计成本（totalCost）。
 7. **交棒收口**：告知用户产物位置（项目目录 `exports/aidrama/`，`<slug>-<beatId>-s<n>.mp4`），由用户把满意的片段拖回自己的 NLE 按 beat 区间对齐。本 skill 在此停（回轨是手工环节）。
 

@@ -12,8 +12,8 @@ export const LORA_JOBS_DIR = join(LORA_DIR, "jobs");
 export const TEMPLATES_DIR = join(ROOT, "templates");
 const CONFIG_PATH = join(DATA_DIR, "config.json");
 
-export type PublicStudioConfig = Omit<StudioConfig, "falKey" | "arkApiKey"> & {
-  secretsConfigured: { falKey: boolean; arkApiKey: boolean };
+export type PublicStudioConfig = Omit<StudioConfig, "falKey" | "arkApiKey" | "pixmindKey"> & {
+  secretsConfigured: { falKey: boolean; arkApiKey: boolean; pixmindKey: boolean };
 };
 
 export function ensureDirs() {
@@ -67,8 +67,8 @@ export function saveConfig(cfg: StudioConfig) {
 }
 
 export function publicConfig(cfg: StudioConfig = loadConfig()): PublicStudioConfig {
-  const { falKey, arkApiKey, ...safe } = cfg;
-  return { ...safe, secretsConfigured: { falKey: !!falKey, arkApiKey: !!arkApiKey } };
+  const { falKey, arkApiKey, pixmindKey, ...safe } = cfg;
+  return { ...safe, secretsConfigured: { falKey: !!falKey, arkApiKey: !!arkApiKey, pixmindKey: !!pixmindKey } };
 }
 
 /** 接受 UI/CLI 的脱敏 patch；未显式提交密钥时保留已有 secret。 */
@@ -77,6 +77,7 @@ export function mergeConfigPatch(current: StudioConfig, patch: Record<string, un
   const next = { ...current, ...rest } as StudioConfig;
   if (typeof patch.falKey !== "string") next.falKey = current.falKey;
   if (typeof patch.arkApiKey !== "string") next.arkApiKey = current.arkApiKey;
+  if (typeof patch.pixmindKey !== "string") next.pixmindKey = current.pixmindKey;
   next.prices = { ...current.prices, ...((patch.prices as Record<string, number> | undefined) ?? {}) };
   next.refPolicies = { ...current.refPolicies, ...((patch.refPolicies as StudioConfig["refPolicies"] | undefined) ?? {}) };
   return next;

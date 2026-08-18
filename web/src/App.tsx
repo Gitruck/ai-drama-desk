@@ -10,6 +10,7 @@ const KF_PROVIDERS = [
   { id: "comfyui-image", label: "本地 ComfyUI · A（参考图）" },
   { id: "comfyui-image2", label: "本地 ComfyUI · B（LoRA）" },
   { id: "seedream-image", label: "Seedream 5.0 Pro（¥0.3/张）" },
+  { id: "pixmind-image", label: "PixMind 云出口（Nano Banana 2 Eco · ¥0.36/张）" },
   { id: "mock-image", label: "mock（离线占位）" },
 ];
 const VID_PROVIDERS = [
@@ -17,6 +18,7 @@ const VID_PROVIDERS = [
   { id: "h3-video", label: "本地 MiniMax H3（4 步 Turbo · 带音轨）" },
   { id: "hunyuan-video", label: "本地 混元1.5（480p 蒸馏）" },
   { id: "fal-video", label: "fal 云出口（Wan2.2）" },
+  { id: "pixmind-video", label: "PixMind 云出口（MiniMax H3 Eco · 480p 带音轨 · ¥0.29/秒）" },
   { id: "mock-video", label: "mock（离线占位）" },
 ];
 

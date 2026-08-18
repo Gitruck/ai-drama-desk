@@ -100,7 +100,7 @@ function allowedMediaPath(requested: string): boolean {
 function redactOperationalText(value: string): string {
   let safe = value.replace(/[A-Za-z]:[\\/][^\s"'`]+/g, "<local-path>");
   const config = loadConfig();
-  for (const secret of [config.falKey, config.arkApiKey]) if (secret) safe = safe.split(secret).join("<redacted-secret>");
+  for (const secret of [config.falKey, config.arkApiKey, config.pixmindKey]) if (secret) safe = safe.split(secret).join("<redacted-secret>");
   return safe;
 }
 
@@ -219,6 +219,8 @@ export function createRequestHandler() {
             "h3-video": diagnostic.providers["h3-video"].ready,
             "seedream-image": !!c.arkApiKey,
             "fal-video": !!c.falKey,
+            "pixmind-image": !!c.pixmindKey,
+            "pixmind-video": !!c.pixmindKey,
             "mock-image": true,
             "mock-video": true,
           },

@@ -9,6 +9,7 @@ const FALLBACK_POLICIES: Record<string, RefPolicy> = {
   "comfyui-image": { refStrategy: "single-crop", refBudget: 3 },
   "comfyui-image2": { refStrategy: "single-crop", refBudget: 3 },
   "seedream-image": { refStrategy: "multi-image", refBudget: 10 },
+  "pixmind-image": { refStrategy: "multi-image", refBudget: 14 },
   "mock-image": { refStrategy: "none", refBudget: 0 },
 };
 
@@ -27,6 +28,7 @@ const GEN_PROVIDER_LABEL: Record<string, string> = {
   "comfyui-image": "本地 A 档 · 开源模型零前置",
   "comfyui-image2": "本地 B 档 · 画风 LoRA",
   "seedream-image": "Seedream 云端",
+  "pixmind-image": "PixMind 云端 · Nano Banana 2 Eco",
   "mock-image": "mock · 仅占位演练",
 };
 

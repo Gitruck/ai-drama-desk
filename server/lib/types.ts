@@ -217,6 +217,25 @@ export interface StudioConfig {
   falKey?: string;
   /** 火山方舟 API Key（Seedream 图像出口） */
   arkApiKey?: string;
+  /** PixMind API Key（合作方统一网关，云端出片 + 出图；控制台 /api-platform/dashboard/keys 创建） */
+  pixmindKey?: string;
+  /** PixMind 出片模型 ID（默认 minimax-h3-eco：480p/720p、4–15 秒、带原生 32kHz 立体声） */
+  pixmindVideoModel: string;
+  /**
+   * PixMind 出片分辨率。eco 线路只有 480p / 720p，且 API 缺省是 720p（$0.06/秒）——
+   * 工作台一律显式传值，默认取便宜档 480p（$0.040/秒）。实出像素：480p→864×480、720p→1280×736。
+   */
+  pixmindVideoResolution: string;
+  /** PixMind 出图模型 ID（默认 nano-banana-2-eco：收 base64 参考图、预算 14 张、$0.05/张） */
+  pixmindImageModel: string;
+  /** PixMind 出图分辨率档（1K / 2K / 4K；1K@16:9 实出 2752×1536） */
+  pixmindImageSize: string;
+  /**
+   * PixMind 出片单价（元/秒），成本 = 单价 × 实际请求秒数。
+   * 网关任务响应里没有价格快照字段（官方文档所称不成立），故只能本地估算。
+   * 480p $0.040/秒 ≈ ¥0.29；换分辨率或模型时须同步改这个值。
+   */
+  pixmindVideoPricePerSec: number;
   /** 方舟 Seedream 模型 ID */
   seedreamModel: string;
   /** Seedream 出图尺寸 */
@@ -314,6 +333,11 @@ export const DEFAULT_CONFIG: StudioConfig = {
     },
   },
   falVideoModel: "fal-ai/wan/v2.2-a14b/image-to-video",
+  pixmindVideoModel: "minimax-h3-eco",
+  pixmindVideoResolution: "480p",
+  pixmindImageModel: "nano-banana-2-eco",
+  pixmindImageSize: "1K",
+  pixmindVideoPricePerSec: 0.29,
   seedreamModel: "doubao-seedream-5-0-pro-260628",
   seedreamSize: "1664x928",
   videoWidth: 960,
@@ -325,6 +349,8 @@ export const DEFAULT_CONFIG: StudioConfig = {
     "comfyui-image": { refStrategy: "single-crop", refBudget: 3 },
     "comfyui-image2": { refStrategy: "single-crop", refBudget: 3 },
     "seedream-image": { refStrategy: "multi-image", refBudget: 10 },
+    // nano-banana 系收 base64 参考图、上限 14 张（网关 referenceImageConfig 实核）
+    "pixmind-image": { refStrategy: "multi-image", refBudget: 14 },
     "mock-image": { refStrategy: "none", refBudget: 0 },
   },
   prices: {
@@ -335,6 +361,9 @@ export const DEFAULT_CONFIG: StudioConfig = {
     "h3-video": 0,
     "fal-video": 0.7,
     "seedream-image": 0.3,
+    // pixmind-video 的真实成本按 pixmindVideoPricePerSec × 秒数动态算；此值仅作单价缺失时的兜底
+    "pixmind-video": 1.45,
+    "pixmind-image": 0.36,
     "mock-image": 0,
     "mock-video": 0,
   },

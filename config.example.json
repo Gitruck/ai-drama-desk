@@ -4,6 +4,10 @@
     "首次启动若 data/config.json 不存在，服务端会自动写入一份同等默认值，也可不用本模板。",
     "falKey：fal.ai 的 API Key（云端视频出口 fal-video）；留空则该出口不可用。",
     "arkApiKey：火山方舟 API Key（Seedream 图像出口 seedream-image）；留空则该出口不可用。",
+    "pixmindKey：PixMind API Key（形如 sk_live_…），同时驱动云端出片 pixmind-video 与云端出图 pixmind-image；留空则两出口不可用。取自 pixmind.io/api-platform/dashboard/keys，建议只授本线路需要的图片/视频权限并配预算限流。没有本地 GPU 的用户填这一把即可全云出片。",
+    "pixmindVideoModel / pixmindImageModel：PixMind 线路 ID。改这两个即可切该平台全目录模型，无需改代码；注意目录收录 ≠ 已接入生成路由，未接线的线路会返回「不支持的模型」。",
+    "pixmindVideoResolution：eco 线路只有 480p / 720p。默认 480p（$0.040/秒，实出 864×480）；720p 是 $0.060/秒、实出 1280×736。API 缺省为 720p，工作台一律显式传值以免误走贵档。",
+    "pixmindVideoPricePerSec：出片单价（元/秒），成本 = 单价 × 实际请求秒数。网关任务响应不返回价格快照，只能本地估算；换分辨率或模型后请同步改这个值。",
     "comfyImage2.promptPrefix 是风格 LoRA 触发词示例，换成你自己训练/下载的 LoRA 触发词。",
     "exportKeepAudio：导出回轨包时是否保留片段自带音轨，默认 false（剥离）。H3 出片必带原生立体声、关不掉，垫在口播下会叠声；剥离走 ffmpeg 流拷贝不重编码，改这个开关重导即可，无需重新出片。",
     "以 _ 开头的键仅作注释，多余键不影响加载。"
@@ -12,6 +16,12 @@
   "comfyUrl": "http://127.0.0.1:8188",
   "falKey": "",
   "arkApiKey": "",
+  "pixmindKey": "",
+  "pixmindVideoModel": "minimax-h3-eco",
+  "pixmindVideoResolution": "480p",
+  "pixmindImageModel": "nano-banana-2-eco",
+  "pixmindImageSize": "1K",
+  "pixmindVideoPricePerSec": 0.29,
   "comfyImage": {
     "template": "qwen-edit-keyframe.json",
     "nodeMap": {
@@ -90,6 +100,7 @@
     "comfyui-image": { "refStrategy": "single-crop", "refBudget": 3 },
     "comfyui-image2": { "refStrategy": "single-crop", "refBudget": 3 },
     "seedream-image": { "refStrategy": "multi-image", "refBudget": 10 },
+    "pixmind-image": { "refStrategy": "multi-image", "refBudget": 14 },
     "mock-image": { "refStrategy": "none", "refBudget": 0 }
   },
   "prices": {
@@ -100,6 +111,8 @@
     "h3-video": 0,
     "fal-video": 0.7,
     "seedream-image": 0.3,
+    "pixmind-video": 1.45,
+    "pixmind-image": 0.36,
     "mock-image": 0,
     "mock-video": 0
   },

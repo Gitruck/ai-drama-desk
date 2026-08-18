@@ -10,6 +10,7 @@ import { assembleCharRefAnchors, assembleRefs, buildCharRefNegatives, buildCharR
 import { comfyGenerate } from "./providers/comfyui.ts";
 import { falVideoGenerate } from "./providers/fal.ts";
 import { mockKeyframe, mockVideo } from "./providers/mock.ts";
+import { pixmindDuration, pixmindImageGenerate, pixmindVideoGenerate } from "./providers/pixmind.ts";
 import { seedreamGenerate } from "./providers/seedream.ts";
 import type { CharRefMode, GenJob, JobKind, Project, StudioConfig, StyleProfile } from "./types.ts";
 import { getGpuLease, releaseGpu, tryAcquireGpu } from "./gpu-lease.ts";
@@ -233,6 +234,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     const ts = `${Date.now().toString(36)}-${job.id.split("-")[0]}`;
     const comfyCommon = { signal, stallToleranceMs: cfg.comfyStallToleranceMs };
     let outputs: string[] = [];
+    /** 按秒计价的出口（PixMind）记下实际计费秒数；其余出口留 undefined 走 prices 固定价 */
+    let billedSec: number | undefined;
 
     // 角色参考图（人设锚点）：自成一支，产物直接落角色源图库，不涉及镜头。
     if (job.kind === "charref") {
@@ -290,6 +293,25 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           negative: buildKeyframeNegatives(p, style, shot),
           refImages: plan.refImages,
           size: cfg.seedreamSize,
+          outDir,
+          outPrefix: prefix,
+          signal,
+        });
+      } else if (job.provider === "pixmind-image") {
+        if (!cfg.pixmindKey) throw new Error("未配置 pixmindKey（PixMind API Key）");
+        // multi-image 策略：多图直喂集，预算 14（nano-banana 系上限）
+        const plan = assembleRefs(p, shot, style, cfg, job.provider);
+        if (plan.warnings.length > 0) job.warnings = [...(job.warnings ?? []), ...plan.warnings];
+        outputs = await pixmindImageGenerate({
+          pixmindKey: cfg.pixmindKey,
+          model: cfg.pixmindImageModel,
+          prompt: buildKeyframePrompt(p, shot, style, plan),
+          negative: buildKeyframeNegatives(p, style, shot),
+          refImages: plan.refImages,
+          refBudget: cfg.refPolicies[job.provider]?.refBudget,
+          size: cfg.pixmindImageSize,
+          width: cfg.keyframeWidth,
+          height: cfg.keyframeHeight,
           outDir,
           outPrefix: prefix,
           signal,
@@ -384,6 +406,25 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           outPrefix: prefix,
           signal,
         });
+      } else if (job.provider === "pixmind-video") {
+        if (!cfg.pixmindKey) throw new Error("未配置 pixmindKey（PixMind API Key）");
+        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        // eco 线路无 negative 字段（supports.negativePrompt=false），不传负面；音轨默认开（核心能力）
+        outputs = await pixmindVideoGenerate({
+          pixmindKey: cfg.pixmindKey,
+          model: cfg.pixmindVideoModel,
+          prompt: pos,
+          imagePath: kfPath,
+          durationSec,
+          resolution: cfg.pixmindVideoResolution,
+          width: cfg.videoWidth,
+          height: cfg.videoHeight,
+          outDir,
+          outPrefix: prefix,
+          signal,
+        });
+        // 计费按实际请求秒数（与 provider 内的归一口径一致），不是镜头建议秒数
+        billedSec = pixmindDuration(durationSec);
       } else {
         throw new Error(`未知 video provider: ${job.provider}`);
       }
@@ -392,8 +433,11 @@ async function runJob(job: GenJob, signal: AbortSignal) {
       if (!getChoices(fresh, shot.index).video) setChoice(fresh, shot.index, "video", outputs[0]);
     }
 
-    // 成本入账
-    const cost = cfg.prices[job.provider] ?? 0;
+    // 成本入账。PixMind 出片按秒计价（网关任务响应无价格快照字段，只能本地估算）；
+    // 其余 provider 沿用 prices 的单条固定价。
+    const cost = billedSec !== undefined
+      ? Number((cfg.pixmindVideoPricePerSec * billedSec).toFixed(4))
+      : cfg.prices[job.provider] ?? 0;
     if (cost > 0) {
       const fresh = getProject(p.id)!;
       fresh.costLedger.push({ at: Date.now(), provider: job.provider, kind: job.kind, shotIndex: shot.index, cost });
@@ -473,8 +517,24 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
       outPrefix: prefix,
       signal,
     });
+  } else if (job.provider === "pixmind-image") {
+    if (!cfg.pixmindKey) throw new Error("未配置 pixmindKey（PixMind API Key）");
+    outputs = await pixmindImageGenerate({
+      pixmindKey: cfg.pixmindKey,
+      model: cfg.pixmindImageModel,
+      prompt,
+      negative,
+      refImages: anchors,
+      refBudget: cfg.refPolicies[job.provider]?.refBudget,
+      size: cfg.pixmindImageSize,
+      width: cfg.keyframeWidth,
+      height: cfg.keyframeHeight,
+      outDir,
+      outPrefix: prefix,
+      signal,
+    });
   } else {
-    throw new Error(`未知 charref provider: ${job.provider}（仅支持 comfyui-image / comfyui-image2 / seedream-image / mock-image）`);
+    throw new Error(`未知 charref provider: ${job.provider}（仅支持 comfyui-image / comfyui-image2 / seedream-image / pixmind-image / mock-image）`);
   }
 
   const file = outputs[0];
