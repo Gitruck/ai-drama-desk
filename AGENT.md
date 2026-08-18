@@ -126,7 +126,9 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 **引擎取值（provider）**：出图 `mock-image` / `comfyui-image`（A 档参考图）/ `comfyui-image2`（B 档
 LoRA，画风须绑定 manifest）/ `seedream-image`（需 `arkApiKey`）/ `pixmind-image`（需 `pixmindKey`，
 默认 Nano Banana 2 Eco、多图直喂预算 14）；出片 `mock-video` / `comfyui-video`
-（Wan2.2 540p）/ `h3-video`（MiniMax H3 4 步 Turbo，出片带原生立体声、固定 24fps）/
+（Wan2.2 540p）/ `h3-video`（MiniMax H3 抽卡档，4 步 Turbo，出片带原生立体声、固定 24fps）/
+`h3-video-final`（MiniMax H3 成片档，12 步 + SigmaShift，同带立体声；与抽卡档是两个独立出口，
+切档不承诺同 seed 复现同一条，5 秒片约 2 倍耗时、15 秒长镜约 5 分钟）/
 `hunyuan-video`（HunyuanVideo 1.5 480p 蒸馏）/ `fal-video`（需 `falKey`）/
 `pixmind-video`（需 `pixmindKey`，默认 MiniMax H3 Eco、4–15 秒、**出片带原生立体声**、零本地依赖）。
 **用户没有本地 GPU 时，首选 `pixmind-image` + `pixmind-video` 这对全云组合**（一把 Key 两条链路）。
@@ -228,6 +230,8 @@ curl -X POST "$API_BASE/projects/$PROJECT_ID/export"
 | B 档置灰 / 拒绝提交 | 当前画风没绑 LoRA manifest → `lora publish` 或手填画风 manifest 的 `weightsPath` |
 | 云引擎报缺 Key | `data/config.json` 填 `pixmindKey` / `falKey` / `arkApiKey`（或 `PUT /config`），密钥不会回显 |
 | PixMind 报 `不支持的模型` | 该线路未接入网关生成路由（与模型目录收录无关）→ 换 `pixmindVideoModel` / `pixmindImageModel` 为已接线线路，或找平台方接线；错误文案原样来自网关 |
+| H3 成片档「像卡住了」 | 多半没卡：`h3-video-final` 是 12 步档，5 秒片约 88 秒，**15 秒长镜约 5 分钟**（帧数只涨 2.9 倍、耗时涨 3.8 倍，注意力开销超线性，别拿 5 秒片的数线性外推）。先看 `GET /jobs` 是否仍 `running`；真要快就用 `h3-video` 抽卡档 |
+| 用户问「成片档是不是更好」 | 两档是**两个独立出口**，只是投入更多算力；切档不承诺同 seed 复现同一条（换配方即换采样轨迹，出来的是另一条）。如实说明差异，别替用户判优劣 |
 | mock 出图/出片失败 | 本地 `ffmpeg` 不在 PATH → 装上或加进 PATH |
 | 出场角色被裁减告警 | 引擎参考预算所限（A/B 档 3 张、Seedream 10 张、PixMind 14 张）→ 转告用户被点名的角色，让用户调整参考集 |
 | LoRA 一直 `blocked` | 本地生成队列占着 GPU 租约 / ComfyUI `/queue` 有任务 / 外部进程占显存 → 排空再跑 |

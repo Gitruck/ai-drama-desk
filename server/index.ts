@@ -217,6 +217,7 @@ export function createRequestHandler() {
             "comfyui-video": diagnostic.providers["comfyui-video"].ready,
             "hunyuan-video": diagnostic.providers["hunyuan-video"].ready,
             "h3-video": diagnostic.providers["h3-video"].ready,
+            "h3-video-final": diagnostic.providers["h3-video-final"].ready,
             "seedream-image": !!c.arkApiKey,
             "fal-video": !!c.falKey,
             "pixmind-image": !!c.pixmindKey,

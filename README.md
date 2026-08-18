@@ -174,6 +174,16 @@ mypaths:
 | `minimax_h3_audio_vae_fp32.safetensors` | `models/vae` | H3 音频 VAE。**缺它就没有音轨** |
 | `minimax_h3_fl2va_4step_lora.safetensors` | `models/loras` | 4 步 Turbo LoRA（在剪枝底模上原生蒸馏）。不想要加速就把模板里的 `LoraLoaderModelOnly` 摘掉、步数改回 20、采样器换 `res_multistep` |
 
+**I2V 出片 · MiniMax H3 成片档（`minimax-h3-i2v-final.json`）**
+
+> 底模、文本编码器、双 VAE 与上面 4 步档**逐项相同**（已有就不用再下）；成片档只额外多一个加速 LoRA。
+> 配方是 12 步 + `MiniMaxH3SigmaShift(6.0 / 3.0)` + 该 LoRA @0.75，全写死在模板图里。
+> 上面那条「剪枝底模 × LoRA 形状必须配套」的警示同样适用：形状不配是静默失效（只打 `WARNING SHAPE MISMATCH`，照常出片但没有加速）。判据看 s/步，不是「能不能出片」。
+
+| 权重文件 | 落位子目录 | 说明 |
+|---|---|---|
+| `minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors` | `models/loras` | 成片档加速 LoRA（lightx2v 系社区蒸馏产物）。**本仓不分发该权重**，再分发与商用条款请自行确认。不想用就把模板里的 `LoraLoaderModelOnly` 摘掉并相应调步数 |
+
 > **音轨关不掉，但导出可以剥。** H3 的视频与音频 latent 打包在同一个 `NestedTensor` 里联合去噪，节点上没有关音频的入参——出片必带原生 32kHz 立体声。垫在口播下面会叠声，所以导出回轨包时**默认剥离**（配置项 `exportKeepAudio`，默认 `false`）。剥离走 ffmpeg 流拷贝，不重编码、视频流逐字节不变；项目候选里的原片仍带音轨，改开关重导即可找回，不必重新出片。manifest 会逐条标注音轨状态（`有` / `已剥离` / `无`）。
 
 **I2V 出片 · HunyuanVideo 1.5 480p 蒸馏档（`hunyuan15-i2v-480p.json`）**
@@ -279,7 +289,8 @@ mypaths:
 | `seedream-image` | 出图 | `arkApiKey` | 火山方舟 Seedream，多图直喂（预算 10 张） |
 | `pixmind-image` | 出图 | `pixmindKey` | PixMind 云出口，默认 Nano Banana 2 Eco，多图直喂（预算 14 张）；**零本地依赖** |
 | `comfyui-video` | 出片 | 本地 ComfyUI | Wan2.2 I2V 540p 抽卡档 |
-| `h3-video` | 出片 | 本地 ComfyUI ≥0.30 | MiniMax H3 I2V，4 步 Turbo；**出片自带原生 32kHz 立体声**，固定 24fps |
+| `h3-video` | 出片 | 本地 ComfyUI ≥0.30 | MiniMax H3 I2V · 抽卡档，4 步 Turbo；**出片自带原生 32kHz 立体声**，固定 24fps |
+| `h3-video-final` | 出片 | 本地 ComfyUI ≥0.30 | MiniMax H3 I2V · 成片档，12 步 + SigmaShift；同样带原生立体声。与抽卡档是**两个独立出口**，切档不承诺同 seed 复现同一条，只是投入更多算力。5 秒片约 2 倍耗时（走出口实测约 88 秒）；15 秒长镜超线性，约 5 分钟，别拿 5 秒片的数线性外推 |
 | `hunyuan-video` | 出片 | 本地 ComfyUI | HunyuanVideo 1.5 480p 步数蒸馏档 |
 | `fal-video` | 出片 | `falKey` | fal.ai Wan2.2 A14B I2V，高动作镜头或赶工 |
 | `pixmind-video` | 出片 | `pixmindKey` | PixMind 云出口，默认 MiniMax H3 Eco，4–15 秒、480p/720p；**出片自带原生 32kHz 立体声、零本地依赖**，本地跑不动 H3 时走这条 |

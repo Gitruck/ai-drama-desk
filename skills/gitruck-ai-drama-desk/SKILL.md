@@ -69,6 +69,9 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 3. **出图批次**：`POST /api/v1/projects/<id>/shots/<n>/keyframe` 或全自动 `POST /api/v1/projects/<id>/auto`。轮询 `GET /api/v1/jobs?project=<id>` 到全 done，失败逐条报错因。
 4. **用户挑图**（检查点）：抽卡与选用在工作台点击完成，别替用户拍审美。
 5. **出片批次**：同 auto/逐镜。默认本地 ComfyUI；用户嫌某镜动作塌 → 换 `fal-video` 或 `pixmind-video` 重 roll 该镜（后者带原生音轨、无本地依赖）。
+   H3 分两档：`h3-video` 抽卡档（4 步）多抽几条看动作，这镜定了再用 `h3-video-final` 成片档（12 步）出一两条。
+   **别对用户说成片档「更好」**——两档是独立出口、切档不承诺同 seed 复现同一条，只是投入更多算力，挑哪条是用户的事。
+   成本如实说：5 秒片抽卡约 36 秒、成片约 78 秒，但 15 秒长镜成片要约 5 分钟（超线性，别按 2 倍外推）。
 6. **导出**：`POST /api/v1/projects/<id>/export` → 读 manifest 转告：实测 vs 建议时长差值、未导出的镜（skipped）、累计成本（totalCost）。
 7. **交棒收口**：告知用户产物位置（项目目录 `exports/aidrama/`，`<slug>-<beatId>-s<n>.mp4`），由用户把满意的片段拖回自己的 NLE 按 beat 区间对齐。本 skill 在此停（回轨是手工环节）。
 

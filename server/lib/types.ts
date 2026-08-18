@@ -212,8 +212,14 @@ export interface StudioConfig {
   comfyVideo?: ComfyWorkflowConfig;
   /** 混元 1.5 I2V 视频模板槽（480p 步数蒸馏），与 Wan 做对比 */
   comfyVideoHunyuan?: ComfyWorkflowConfig;
-  /** MiniMax H3 I2V 视频模板槽（4 步 Turbo，出片自带原生 32kHz 立体声） */
+  /** MiniMax H3 I2V 视频模板槽 · 抽卡档（4 步 Turbo，出片自带原生 32kHz 立体声） */
   comfyVideoH3?: ComfyWorkflowConfig;
+  /**
+   * MiniMax H3 I2V 视频模板槽 · 成片档（12 步 + SigmaShift，同样带原生立体声）。
+   * 与抽卡档是两个独立出口，不承诺同 seed 复现同一条；配方差异全在模板图里。
+   * 分辨率由模板固定、不注入（照 comfyVideoHunyuan 先例）。
+   */
+  comfyVideoH3Final?: ComfyWorkflowConfig;
   falKey?: string;
   /** 火山方舟 API Key（Seedream 图像出口） */
   arkApiKey?: string;
@@ -332,6 +338,18 @@ export const DEFAULT_CONFIG: StudioConfig = {
       frames: { id: "5", field: "length" },
     },
   },
+  // 成片档：12 步 + SigmaShift 6.0/3.0 + 加速 LoRA @0.75，全写死在模板图里。
+  // 刻意不映射 width/height——分辨率是配方的一部分，由模板固定（同 comfyVideoHunyuan）；
+  // 也别映射 loraName，那个键会让 providerDiagnostic 把权重从缺模核对里豁免掉。
+  comfyVideoH3Final: {
+    template: "minimax-h3-i2v-final.json",
+    nodeMap: {
+      prompt: { id: "5", field: "prompt" },
+      startImage: { id: "80", field: "image" },
+      seed: { id: "7", field: "noise_seed" },
+      frames: { id: "5", field: "length" },
+    },
+  },
   falVideoModel: "fal-ai/wan/v2.2-a14b/image-to-video",
   pixmindVideoModel: "minimax-h3-eco",
   pixmindVideoResolution: "480p",
@@ -359,6 +377,8 @@ export const DEFAULT_CONFIG: StudioConfig = {
     "comfyui-video": 0,
     "hunyuan-video": 0,
     "h3-video": 0,
+    // 显式登记，避免落进 `cfg.prices[provider] ?? 0` 的兜底——「本地免费」与「没登记」得能分开
+    "h3-video-final": 0,
     "fal-video": 0.7,
     "seedream-image": 0.3,
     // pixmind-video 的真实成本按 pixmindVideoPricePerSec × 秒数动态算；此值仅作单价缺失时的兜底

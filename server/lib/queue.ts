@@ -12,8 +12,9 @@ import { falVideoGenerate } from "./providers/fal.ts";
 import { mockKeyframe, mockVideo } from "./providers/mock.ts";
 import { pixmindDuration, pixmindImageGenerate, pixmindVideoGenerate } from "./providers/pixmind.ts";
 import { seedreamGenerate } from "./providers/seedream.ts";
-import type { CharRefMode, GenJob, JobKind, Project, StudioConfig, StyleProfile } from "./types.ts";
+import type { CharRefMode, ComfyWorkflowConfig, GenJob, JobKind, Project, StudioConfig, StyleProfile } from "./types.ts";
 import { getGpuLease, releaseGpu, tryAcquireGpu } from "./gpu-lease.ts";
+import { artifactPrefix, artifactTs } from "../../shared/contracts/artifact-name.ts";
 
 const jobs: GenJob[] = [];
 let seq = 0;
@@ -34,7 +35,18 @@ const LANE_LIMIT: Record<Lane, number> = { local: 1, cloud: 2, mock: 2 };
  * 否则会落进 cloud 车道并发 2 且不抢租约——H3 单条常驻约 21GB/24GB，
  * 并发两条或与 Wan2.2 / LoRA 训练并行必 OOM。
  */
-const LOCAL_GPU_PROVIDERS = new Set(["hunyuan-video", "h3-video"]);
+const LOCAL_GPU_PROVIDERS = new Set(["hunyuan-video", "h3-video", "h3-video-final"]);
+
+/** 出片出口 -> 它吃的 workflow 槽。产物命名要据此判断种子是否真会进图。 */
+function videoWorkflowOf(cfg: StudioConfig, provider: string): ComfyWorkflowConfig | undefined {
+  switch (provider) {
+    case "comfyui-video": return cfg.comfyVideo;
+    case "hunyuan-video": return cfg.comfyVideoHunyuan;
+    case "h3-video": return cfg.comfyVideoH3;
+    case "h3-video-final": return cfg.comfyVideoH3Final;
+    default: return undefined;
+  }
+}
 
 export function laneOf(provider: string): Lane {
   if (provider.startsWith("comfyui") || LOCAL_GPU_PROVIDERS.has(provider)) return "local";
@@ -231,7 +243,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     if (!p) throw new Error("项目不存在");
     const style = p.styleId ? getStyle(p.styleId) : null;
     // 前缀含 job.id（内含全局递增 seq），杜绝同毫秒撞名覆盖
-    const ts = `${Date.now().toString(36)}-${job.id.split("-")[0]}`;
+    const ts = artifactTs(Date.now(), job.id.split("-")[0]!);
     const comfyCommon = { signal, stallToleranceMs: cfg.comfyStallToleranceMs };
     let outputs: string[] = [];
     /** 按秒计价的出口（PixMind）记下实际计费秒数；其余出口留 undefined 走 prices 固定价 */
@@ -332,7 +344,20 @@ async function runJob(job: GenJob, signal: AbortSignal) {
       }
     } else {
       const outDir = shotDir(p.id, "videos", shot.index);
-      const prefix = `${job.provider}-${ts}`;
+      // 本地 comfy 系出口的种子提到分支外生成一次，并落进产物名：
+      // 「这条是哪个出口、什么种子出的」成为磁盘上的事实，而不依赖界面状态。
+      // 云出口无本地种子概念，命名保持原样。
+      const seed = Math.floor(Math.random() * 2 ** 31);
+      // 种子只在【本次真会被注进图】时才落进文件名。
+      // 判据两条缺一不可：① 本地采样出口（云出口没有我方种子概念）；
+      // ② 该槽的 nodeMap 登记了 seed —— comfyGenerate 对未登记的 seed 是静默跳过
+      // （providers/comfyui.ts 的 `opts.seed != null && map.seed`），自带模板漏登记时
+      // 图里跑的是模板写死的那个值。此时若照拼 `-s<seed>`，文件名就是磁盘上的假话，
+      // 用户拿它复现只会得到无关结果。
+      const seedInjected = laneOf(job.provider) === "local" && !!videoWorkflowOf(cfg, job.provider)?.nodeMap.seed;
+      const prefix = seedInjected
+        ? artifactPrefix(job.provider, ts, seed)
+        : artifactPrefix(job.provider, ts);
       const durationSec = shot.durationSec ?? cfg.defaultShotSec;
       const chosen = getChoices(p, shot.index).keyframe ?? listShotOutputs(p.id, "keyframes", shot.index)[0];
       const kfPath = chosen ? join(shotDir(p.id, "keyframes", shot.index), chosen) : undefined;
@@ -349,7 +374,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           prompt: pos,
           negative: neg,
           startImage: kfPath,
-          seed: Math.floor(Math.random() * 2 ** 31),
+          seed,
           width: cfg.videoWidth,
           height: cfg.videoHeight,
           frames: wanFrames(durationSec, cfg.videoFps),
@@ -367,7 +392,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           prompt: pos,
           negative: neg,
           startImage: kfPath,
-          seed: Math.floor(Math.random() * 2 ** 31),
+          seed,
           frames: wanFrames(durationSec, 24),
           outDir,
           outPrefix: prefix,
@@ -382,9 +407,25 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           wf: cfg.comfyVideoH3,
           prompt: pos,
           startImage: kfPath,
-          seed: Math.floor(Math.random() * 2 ** 31),
+          seed,
           width: cfg.videoWidth,
           height: cfg.videoHeight,
+          frames: h3Frames(durationSec),
+          outDir,
+          outPrefix: prefix,
+          ...comfyCommon,
+        });
+      } else if (job.provider === "h3-video-final") {
+        if (!cfg.comfyVideoH3Final) throw new Error("未配置 H3 成片档 workflow（settings → comfyVideoH3Final）");
+        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        // 与抽卡档同为无负分支、24fps、17k+5 栅格；差别在配方（步数/SigmaShift/加速 LoRA），
+        // 全写死在模板图里。分辨率也归模板管，故不传 width/height（同混元档的先例）。
+        outputs = await comfyGenerate({
+          comfyUrl: cfg.comfyUrl,
+          wf: cfg.comfyVideoH3Final,
+          prompt: pos,
+          startImage: kfPath,
+          seed,
           frames: h3Frames(durationSec),
           outDir,
           outPrefix: prefix,

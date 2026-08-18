@@ -3,6 +3,7 @@ import { EDITION_NOTICE, type LoraJob, type LoraTrainRequest } from "../../share
 import { api, projFile, styleRef } from "./api.ts";
 import { CharacterPanel, refPolicyFor, strategyBadgeText } from "./components/CharacterPanel.tsx";
 import { keyframeProviderState } from "./provider-state.ts";
+import { tierBadge } from "./provider-tier.ts";
 
 type View = { kind: "home" } | { kind: "project"; id: string } | { kind: "styles" } | { kind: "lora" } | { kind: "settings" };
 
@@ -15,7 +16,10 @@ const KF_PROVIDERS = [
 ];
 const VID_PROVIDERS = [
   { id: "comfyui-video", label: "本地 Wan2.2（540p 抽卡档）" },
-  { id: "h3-video", label: "本地 MiniMax H3（4 步 Turbo · 带音轨）" },
+  // 两档只陈述客观参数（步数、是否带音轨），不写「高质量/更好/推荐」——
+  // 哪档合用是审美取舍，留给用户看，系统不替他判。
+  { id: "h3-video", label: "本地 MiniMax H3 · 抽卡档（4 步 · 带音轨）" },
+  { id: "h3-video-final", label: "本地 MiniMax H3 · 成片档（12 步 · 带音轨 · 约 2 倍耗时）" },
   { id: "hunyuan-video", label: "本地 混元1.5（480p 蒸馏）" },
   { id: "fal-video", label: "fal 云出口（Wan2.2）" },
   { id: "pixmind-video", label: "PixMind 云出口（MiniMax H3 Eco · 480p 带音轨 · ¥0.29/秒）" },
@@ -800,6 +804,9 @@ function ShotCard({
                   onMouseLeave={(e) => e.currentTarget.pause()}
                   onClick={() => setPreview({ kind: "video", idx: i })}
                 />
+                {/* 徽章只标出身不判优劣；title 挂不上去（.media-badge 是 pointer-events:none，
+                    否则会挡住点开放大预览），故文字本身要自解释 */}
+                {tierBadge(f) && <span className="media-badge">{tierBadge(f)}</span>}
                 <button className="media-delete" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("video", f)}>
                   ×
                 </button>

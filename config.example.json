@@ -88,6 +88,16 @@
       "frames": { "id": "5", "field": "length" }
     }
   },
+  "comfyVideoH3Final": {
+    "_说明": "H3 成片档：12 步 + SigmaShift，配方全在模板图里。刻意不映射 width/height——分辨率是配方的一部分、由模板固定；也别映射 loraName，那个键会让权重被诊断豁免掉。",
+    "template": "minimax-h3-i2v-final.json",
+    "nodeMap": {
+      "prompt": { "id": "5", "field": "prompt" },
+      "startImage": { "id": "80", "field": "image" },
+      "seed": { "id": "7", "field": "noise_seed" },
+      "frames": { "id": "5", "field": "length" }
+    }
+  },
   "falVideoModel": "fal-ai/wan/v2.2-a14b/image-to-video",
   "seedreamModel": "doubao-seedream-5-0-pro-260628",
   "seedreamSize": "1664x928",
@@ -109,6 +119,7 @@
     "comfyui-video": 0,
     "hunyuan-video": 0,
     "h3-video": 0,
+    "h3-video-final": 0,
     "fal-video": 0.7,
     "seedream-image": 0.3,
     "pixmind-video": 1.45,
