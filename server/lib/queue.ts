@@ -12,7 +12,7 @@ import { falVideoGenerate } from "./providers/fal.ts";
 import { mockKeyframe, mockVideo } from "./providers/mock.ts";
 import { pixmindDuration, pixmindImageGenerate, pixmindVideoGenerate } from "./providers/pixmind.ts";
 import { seedreamGenerate } from "./providers/seedream.ts";
-import type { CharRefMode, ComfyWorkflowConfig, GenJob, JobKind, Project, StudioConfig, StyleProfile } from "./types.ts";
+import type { CharRefMode, ComfyWorkflowConfig, GenJob, JobKind, JobPhase, Project, StudioConfig, StyleProfile } from "./types.ts";
 import { getGpuLease, releaseGpu, tryAcquireGpu } from "./gpu-lease.ts";
 import { artifactPrefix, artifactTs } from "../../shared/contracts/artifact-name.ts";
 import { affinity, weightsOf } from "./weight-affinity.ts";
@@ -103,6 +103,16 @@ function pickNext(runningByLane: Record<Lane, number>): PickedJob | undefined {
     if (j.status !== "queued" || runningByLane[lane] >= LANE_LIMIT[lane]) return false;
     return lane !== "local" || getGpuLease() === null;
   };
+
+  // 排队根因：租约被 LoRA 训练占着时，本地任务的「排队」要说清是在等谁，
+  // 而不是干巴巴一个「排队」——这条直接消掉支持问题里最常见的一类误会。
+  // 只有被【LoRA 训练】占着才叫「等训练释放 GPU」。本地出片自己也持租约，
+  // 那种情况是「等本车道」，不是等训练——谎报会把用户引到错误的排查方向。
+  const heldByTraining = getGpuLease()?.kind === "lora";
+  for (const j of jobs) {
+    if (j.status !== "queued" || laneOf(j.provider) !== "local") continue;
+    j.phase = heldByTraining ? "waiting-gpu" : undefined;
+  }
 
   const localReady = jobs.filter((j) => ready(j) && laneOf(j.provider) === "local");
   if (localReady.length === 0) {
@@ -318,6 +328,7 @@ function dispatchOnce(): void {
     if (lane === "local" && !tryAcquireGpu("generation", next.id)) break;
     next.status = "running";
     next.startedAt = Date.now();
+    next.phase = "running";
     // 从这里到 .finally 挂上为止必须【不可抛】：中途抛出会让任务永远停在 running、
     // GPU 租约没人归还、controllers 里也没句柄（取消不掉），local 车道被永久焊死。
     // 所以指纹是 pickNext 里算好的纯值，这里只做赋值。
@@ -374,7 +385,12 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     const style = p.styleId ? getStyle(p.styleId) : null;
     // 前缀含 job.id（内含全局递增 seq），杜绝同毫秒撞名覆盖
     const ts = artifactTs(Date.now(), job.id.split("-")[0]!);
-    const comfyCommon = { signal, stallToleranceMs: cfg.comfyStallToleranceMs };
+    const comfyCommon = {
+      signal,
+      stallToleranceMs: cfg.comfyStallToleranceMs,
+      // 阶段是纯观测：只写进 job 供界面显示，不参与任何判据
+      onPhase: (phase: JobPhase) => { job.phase = phase; },
+    };
     let outputs: string[] = [];
     /** 按秒计价的出口（PixMind）记下实际计费秒数；其余出口留 undefined 走 prices 固定价 */
     let billedSec: number | undefined;
@@ -628,6 +644,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     // 别拿一个作废的指纹去给下一轮排序
     if (laneOf(job.provider) === "local") invalidateLocalWeights();
   } finally {
+    job.phase = undefined; // 阶段只描述在途任务，终态留着会误导
     // 不可中断的 provider（mock）可能在 abort 之后才跑完；此时状态已是 canceled，不倒回 done。
     if (signal.aborted && job.status === "done") job.status = "canceled";
     job.finishedAt = Date.now();

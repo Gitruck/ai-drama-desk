@@ -335,6 +335,35 @@ function PreviewSummary({ doc, warnings }: { doc: any; warnings: string[] }) {
 }
 
 /** 任务标签：charref 走角色名，`s0 片` 那种哨兵写法在中止按钮旁边只会让人不敢点。 */
+/**
+ * 任务在做什么 + 已用多久。
+ *
+ * 刻意不给百分比：主力模板都是少步蒸馏采样器，step 级进度只有几个 tick，
+ * 而吃墙钟的模型加载、非 tiled VAE 解码、视频封装三段一个进度事件都不发——
+ * 画出来会长时间停在 0% 再瞬间跳满，比不画更骗人。所以只报「在做哪一段」。
+ * 想看真采样进度条的，开自己那个 ComfyUI 网页即可（我方已不再抢占其事件通道）。
+ */
+const PHASE_TEXT: Record<string, string> = {
+  uploading: "上传素材",
+  submitted: "已提交 · 等排队",
+  running: "生成中",
+  downloading: "下载产物",
+  "waiting-gpu": "等 LoRA 训练释放 GPU",
+};
+
+function elapsedText(startedAt?: number): string {
+  if (!startedAt) return "";
+  const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  return sec < 60 ? ` · ${sec}s` : ` · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+}
+
+function jobPhaseText(j: any): string {
+  const phase = j.phase ? PHASE_TEXT[j.phase] : undefined;
+  if (j.status === "running") return (phase ?? "生成中") + elapsedText(j.startedAt);
+  // 排队态：只有「等训练释放 GPU」这一种根因值得点名，其余就是本车道排队
+  return j.phase === "waiting-gpu" ? PHASE_TEXT["waiting-gpu"] : "排队";
+}
+
 function jobLabel(j: any): string {
   if (j.kind === "charref") return `${j.charName ?? "角色"} 人设图`;
   return `s${j.shotIndex} ${j.kind === "keyframe" ? "图" : "片"}`;
@@ -523,7 +552,7 @@ function ProjectBoard({
           <span>{active.length} 个任务进行中：</span>
           {active.map((j) => (
             <span key={j.id} className="job-chip">
-              {jobLabel(j)} · {j.status === "running" ? "生成中" : "排队"}
+              {jobLabel(j)} · {jobPhaseText(j)}
               <button
                 type="button"
                 className="job-chip-cancel"

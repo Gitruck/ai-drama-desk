@@ -106,6 +106,19 @@ export type JobKind = "keyframe" | "video" | "charref";
 export type JobStatus = "queued" | "running" | "done" | "error" | "canceled";
 export type CharRefMode = "single" | "turnaround";
 
+/**
+ * 在途任务的阶段（纯观测）。刻意不做百分比：主力模板都是少步蒸馏采样器，
+ * step 级进度只有几个 tick，而吃墙钟的模型加载、非 tiled VAE 解码、视频封装
+ * 三段一个 progress 事件都不发——画出来会长时间停在 0% 再瞬间跳满，属假精确。
+ * MUST NOT 参与完成/失速/中止判据。
+ */
+export type JobPhase =
+  | "uploading"     // 传参考图/首帧
+  | "submitted"     // 已提交，等 ComfyUI 排到
+  | "running"       // 生成中
+  | "downloading"   // 拉产物落盘
+  | "waiting-gpu";  // 排队：GPU 租约被 LoRA 训练占着
+
 export interface GenJob {
   id: string;
   projectId: string;
@@ -123,6 +136,8 @@ export interface GenJob {
   chainVideoProvider?: string;
   /** 参考预算不足等非致命告警（点名被裁减参考的角色），前端沿现有 jobs 链路展示 */
   warnings?: string[];
+  /** 当前阶段（纯观测，老客户端可忽略）。见 JobPhase。 */
+  phase?: JobPhase;
   /** charref 任务：目标角色名（shotIndex 置 0 哨兵） */
   charName?: string;
   /** charref 任务：single=单人立绘 / turnaround=三视图设定表 */

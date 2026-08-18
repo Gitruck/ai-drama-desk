@@ -7,7 +7,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import type { ComfyDiagnostic, ComfyRuntimeInfo, DiagnosticLayer, ProviderDiagnostic } from "../../../shared/contracts/index.ts";
 import { TEMPLATES_DIR } from "../config.ts";
-import type { ComfyWorkflowConfig, StudioConfig } from "../types.ts";
+import type { ComfyWorkflowConfig, JobPhase, StudioConfig } from "../types.ts";
 
 interface ComfyGenOpts {
   comfyUrl: string;
@@ -30,6 +30,13 @@ interface ComfyGenOpts {
   stallToleranceMs?: number;
   /** 轮询间隔（默认 2s）；测试用它把失速判据的验证压到毫秒级。 */
   pollIntervalMs?: number;
+  /**
+   * 阶段回调（纯观测）。阶段来自本函数自己的控制流，不依赖 ComfyUI 推送——
+   * 主力模板都是少步蒸馏，step 级进度只有几个 tick，而吃墙钟的模型加载、
+   * 非 tiled VAE 解码、视频封装三段一个 progress 事件都不发，画百分比是假精确。
+   * MUST NOT 参与完成/失速/中止判据。
+   */
+  onPhase?: (phase: JobPhase) => void;
   /** 用户中止信号：透传给全部 fetch，并在中止时回收 ComfyUI 侧的 prompt。 */
   signal?: AbortSignal;
   /** 项目所选画风的 LoRA 绑定；存在时动态覆盖模板节点与触发词。 */
@@ -202,6 +209,7 @@ export async function comfyGenerate(opts: ComfyGenOpts): Promise<string[]> {
   if (opts.frames && map.frames) setNode(graph, map.frames, opts.frames);
 
   const signal = opts.signal;
+  opts.onPhase?.("uploading");
   if (map.imageInputs) {
     // 逐张上传一次；槽位多于参考图时断开未使用的可选输入。黑图仍会被 Qwen
     // 编码成一张 Picture，不能充当“无输入”的占位符。
@@ -216,15 +224,19 @@ export async function comfyGenerate(opts: ComfyGenOpts): Promise<string[]> {
     setNode(graph, map.startImage, uploaded);
   }
 
-  const clientId = crypto.randomUUID();
+  // 刻意不传 client_id：本仓从不连 ComfyUI 的 /ws（全仓零 WebSocket），
+  // 传了等于把该 prompt 的全部事件定向投递到一个不存在的 sid 后静默丢弃——
+  // 连用户自己开着的 ComfyUI 网页都看不到本工作台任务的进度。
+  // 不传则退回广播，细粒度采样进度让给 ComfyUI 自己的界面，我方不重造。
   const submit = await fetch(`${opts.comfyUrl}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: graph, client_id: clientId }),
+    body: JSON.stringify({ prompt: graph }),
     signal: reqSignal(30_000, signal),
   });
   if (!submit.ok) throw new Error(`ComfyUI 提交失败: ${submit.status} ${await submit.text()}`);
   const { prompt_id } = (await submit.json()) as { prompt_id: string };
+  opts.onPhase?.("submitted");
 
   try {
     return await awaitOutputs(opts, prompt_id);
@@ -271,7 +283,10 @@ async function awaitOutputs(opts: ComfyGenOpts, promptId: string): Promise<strin
         const msgs = JSON.stringify(entry.status?.messages ?? []).slice(0, 500);
         throw new Error(`ComfyUI 执行出错: ${msgs}`);
       }
-      if (entry.outputs && Object.keys(entry.outputs).length > 0) return await collectOutputs(opts, entry.outputs);
+      if (entry.outputs && Object.keys(entry.outputs).length > 0) {
+        opts.onPhase?.("downloading");
+        return await collectOutputs(opts, entry.outputs);
+      }
       continue;
     }
 
