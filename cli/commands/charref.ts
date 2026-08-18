@@ -4,7 +4,7 @@ import { printResult, type CliContext } from "../lib/output.ts";
 
 interface Job {
   id: string;
-  status: "queued" | "running" | "done" | "error";
+  status: "queued" | "running" | "done" | "error" | "canceled";
   provider: string;
   output?: string;
   error?: string;

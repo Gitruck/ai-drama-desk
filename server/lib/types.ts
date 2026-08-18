@@ -3,6 +3,7 @@
 // 与 07 号调研起草的 return-v1 命名约定（<slug>-<beatId>-s<n>.mp4）
 
 import type { StyleProfileContract } from "../../shared/contracts/index.ts";
+import type { FailureKind } from "./failure.ts";
 
 /** 画风资产档案；共享契约是 UI、CLI 和服务端的共同边界。 */
 export type StyleProfile = StyleProfileContract;
@@ -138,6 +139,8 @@ export interface GenJob {
   warnings?: string[];
   /** 当前阶段（纯观测，老客户端可忽略）。见 JobPhase。 */
   phase?: JobPhase;
+  /** 失败分类（仅 status=error 时有意义）。分不清时为 unknown，见 FailureKind。 */
+  failureKind?: FailureKind;
   /** charref 任务：目标角色名（shotIndex 置 0 哨兵） */
   charName?: string;
   /** charref 任务：single=单人立绘 / turnaround=三视图设定表 */

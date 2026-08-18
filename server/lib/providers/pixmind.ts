@@ -14,6 +14,7 @@
 //     reference_images）被网关接受并内部归一为 image_size/aspectRatio
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { ProviderError } from "../failure.ts";
 import { extname, join } from "node:path";
 
 export const PIXMIND_BASE = "https://aihub-admin.aimix.pro/api-platform/v1";
@@ -95,7 +96,7 @@ function toDataUri(p: string): string {
   const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[
     extname(p).toLowerCase()
   ];
-  if (!mime) throw new Error(`不支持的参考图格式: ${p}`);
+  if (!mime) throw new ProviderError("content", `不支持的参考图格式: ${p}`);
   return `data:${mime};base64,${readFileSync(p).toString("base64")}`;
 }
 
@@ -144,11 +145,11 @@ async function submit(opts: PixmindCommon, body: Record<string, unknown>): Promi
     body: JSON.stringify(body),
     signal: reqSignal(opts.timeoutMs ?? 120_000, opts.signal),
   });
-  if (!res.ok) throw new Error(`PixMind 提交失败: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new ProviderError("transient", `PixMind 提交失败: ${res.status} ${(await res.text()).slice(0, 300)}`);
   const data = unwrap<TaskData>((await res.json()) as Envelope<TaskData>, "提交");
   const taskId = data.taskId;
   if (taskId === undefined || taskId === null || taskId === "") {
-    throw new Error(`PixMind 受理响应里没有 taskId: ${JSON.stringify(data).slice(0, 300)}`);
+    throw new ProviderError("cloud-billed", `PixMind 受理响应里没有 taskId（网关可能已建单，费用可能已产生）: ${JSON.stringify(data).slice(0, 300)}`);
   }
   return String(taskId);
 }
@@ -192,7 +193,7 @@ async function poll(opts: PixmindCommon, taskId: string): Promise<TaskData> {
         continue;
       }
       if (++hardErrors >= 3) {
-        throw new Error(`PixMind 查询任务 ${taskId} 失败: ${lastNote}`);
+        throw new ProviderError("cloud-billed", `PixMind 查询任务 ${taskId} 失败（单已建、费用已产生，勿重试）: ${lastNote}`);
       }
       wait = Math.min(wait * 2, 60_000);
       continue;
@@ -208,12 +209,12 @@ async function poll(opts: PixmindCommon, taskId: string): Promise<TaskData> {
     const status = String(data.status ?? "");
     if (isReady(status)) return data;
     if (isFailed(status)) {
-      throw new Error(`PixMind 任务 ${taskId} ${status}${data.description ? `：${data.description.slice(0, 200)}` : ""}`);
+      throw new ProviderError("cloud-billed", `PixMind 任务 ${taskId} ${status}${data.description ? `：${data.description.slice(0, 200)}` : ""}（费用已产生）`);
     }
     // 其余（processing / pending / 未知新状态）继续等
   }
   // 超时也要把 taskId 带出来：任务可能已在上游出好，凭 id 可人工找回，别让付费产物失联
-  throw new Error(`PixMind 生成超时（任务 ${taskId}${lastNote ? `，最后一次响应：${lastNote}` : ""}）`);
+  throw new ProviderError("cloud-billed", `PixMind 生成超时（任务 ${taskId}${lastNote ? `，最后一次响应：${lastNote}` : ""}，费用已产生）`);
 }
 
 async function download(url: string, outDir: string, name: string, ext: string, signal?: AbortSignal): Promise<string> {

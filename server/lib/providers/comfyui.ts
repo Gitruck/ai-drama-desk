@@ -7,6 +7,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import type { ComfyDiagnostic, ComfyRuntimeInfo, DiagnosticLayer, ProviderDiagnostic } from "../../../shared/contracts/index.ts";
 import { TEMPLATES_DIR } from "../config.ts";
+import { ProviderError, parseComfyExecutionError } from "../failure.ts";
 import type { ComfyWorkflowConfig, JobPhase, StudioConfig } from "../types.ts";
 
 interface ComfyGenOpts {
@@ -115,7 +116,7 @@ async function uploadImage(comfyUrl: string, filePath: string, signal?: AbortSig
   form.append("image", new Blob([data]), name);
   form.append("overwrite", "true");
   const res = await fetch(`${comfyUrl}/upload/image`, { method: "POST", body: form, signal: reqSignal(60_000, signal) });
-  if (!res.ok) throw new Error(`ComfyUI 上传参考图失败: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new ProviderError("transient", `ComfyUI 上传参考图失败: ${res.status} ${await res.text()}`);
   const j = (await res.json()) as { name: string; subfolder?: string };
   return j.subfolder ? `${j.subfolder}/${j.name}` : j.name;
 }
@@ -123,13 +124,13 @@ async function uploadImage(comfyUrl: string, filePath: string, signal?: AbortSig
 function setNode(graph: Record<string, any>, ref: { id: string; field: string } | undefined, value: unknown) {
   if (!ref) return;
   const node = graph[ref.id];
-  if (!node) throw new Error(`workflow 模板里找不到节点 ${ref.id}（检查节点映射配置）`);
+  if (!node) throw new ProviderError("config", `workflow 模板里找不到节点 ${ref.id}（检查节点映射配置）`);
   node.inputs[ref.field] = value;
 }
 
 function setImageNode(graph: Record<string, any>, ref: { id: string; field: string }, value: string) {
   const node = graph[ref.id];
-  if (!node) throw new Error(`workflow 模板里找不到节点 ${ref.id}（检查图片节点映射配置）`);
+  if (!node) throw new ProviderError("config", `workflow 模板里找不到节点 ${ref.id}（检查图片节点映射配置）`);
   // 开源默认模板使用内置纯黑 EmptyImage，避免要求用户手工复制占位 PNG；
   // 一旦有真实参考图，再原位切换为 LoadImage，后续节点连线无需变化。
   if (node.class_type === "EmptyImage") {
@@ -177,7 +178,7 @@ export function comfyLoraName(weightsPath: string): string {
   if (markerAt >= 0) return normalized.slice(markerAt + marker.length).replaceAll("/", "\\");
   if (normalized.toLowerCase().startsWith("models/loras/")) return normalized.slice("models/loras/".length).replaceAll("/", "\\");
   if (!normalized || /^[a-z]:\//i.test(normalized) || normalized.startsWith("/")) {
-    throw new Error("画风 LoRA weightsPath 必须是 ComfyUI models/loras 下的相对名称，或包含 models/loras 的路径");
+    throw new ProviderError("config", "画风 LoRA weightsPath 必须是 ComfyUI models/loras 下的相对名称，或包含 models/loras 的路径");
   }
   return normalized.replaceAll("/", "\\");
 }
@@ -187,7 +188,7 @@ export function applyStyleLoraBinding(
   wf: ComfyWorkflowConfig,
   binding: { weightsPath: string; strength?: number },
 ): void {
-  if (!wf.nodeMap.loraName) throw new Error("LoRA workflow 未配置 loraName 节点映射");
+  if (!wf.nodeMap.loraName) throw new ProviderError("config", "LoRA workflow 未配置 loraName 节点映射");
   setNode(graph, wf.nodeMap.loraName, comfyLoraName(binding.weightsPath));
   if (wf.nodeMap.loraStrength) setNode(graph, wf.nodeMap.loraStrength, binding.strength ?? 0.8);
 }
@@ -234,7 +235,7 @@ export async function comfyGenerate(opts: ComfyGenOpts): Promise<string[]> {
     body: JSON.stringify({ prompt: graph }),
     signal: reqSignal(30_000, signal),
   });
-  if (!submit.ok) throw new Error(`ComfyUI 提交失败: ${submit.status} ${await submit.text()}`);
+  if (!submit.ok) throw new ProviderError("transient", `ComfyUI 提交失败: ${submit.status} ${await submit.text()}`);
   const { prompt_id } = (await submit.json()) as { prompt_id: string };
   opts.onPhase?.("submitted");
 
@@ -268,7 +269,8 @@ async function awaitOutputs(opts: ComfyGenOpts, promptId: string): Promise<strin
       unreachableSince ??= Date.now();
       const downFor = Date.now() - unreachableSince;
       if (downFor >= stallMs) {
-        throw new Error(
+        throw new ProviderError(
+          "transient",
           `ComfyUI 连续 ${Math.round(downFor / 1000)} 秒不可达（可能已崩溃或被关闭），任务中止。等服务恢复后重新出图即可，已出的产物都还在。`,
         );
       }
@@ -280,8 +282,10 @@ async function awaitOutputs(opts: ComfyGenOpts, promptId: string): Promise<strin
     if (entry) {
       orphanStreak = 0;
       if (entry.status?.status_str === "error") {
-        const msgs = JSON.stringify(entry.status?.messages ?? []).slice(0, 500);
-        throw new Error(`ComfyUI 执行出错: ${msgs}`);
+        // 拆开混合根因：OOM / 缺模型 / 缺节点 / 图校验错各自成文、各自分类，
+        // 而不是把整段 messages 截断后原样抛出（截断点还可能切掉异常类型名）
+        const parsed = parseComfyExecutionError(entry.status?.messages);
+        throw new ProviderError(parsed.kind, parsed.message, parsed.detail);
       }
       if (entry.outputs && Object.keys(entry.outputs).length > 0) {
         opts.onPhase?.("downloading");
@@ -298,24 +302,30 @@ async function awaitOutputs(opts: ComfyGenOpts, promptId: string): Promise<strin
       continue;
     }
     if (++orphanStreak >= ORPHAN_CONFIRMATIONS) {
-      throw new Error(
+      throw new ProviderError(
+        "transient",
         "ComfyUI 已重启或队列被清空，本任务提交的 prompt 在它那边已经不存在了，任务中止。重新出图即可。",
       );
     }
   }
-  throw new Error(`ComfyUI 生成超时：等了 ${Math.round(totalMs / 60_000)} 分钟仍未拿到产物，任务中止。`);
+  throw new ProviderError("transient", `ComfyUI 生成超时：等了 ${Math.round(totalMs / 60_000)} 分钟仍未拿到产物，任务中止。`);
 }
 
 async function collectOutputs(opts: ComfyGenOpts, outputs: Record<string, any>): Promise<string[]> {
   const saved: string[] = [];
   let n = 0;
+  /** ComfyUI 报了有产物、我们也去下了但没下成的条数——用来把两种失败分开 */
+  let attempted = 0;
   for (const nodeOut of Object.values(outputs)) {
     const files = [...(nodeOut.images ?? []), ...(nodeOut.gifs ?? []), ...(nodeOut.videos ?? [])];
     for (const f of files) {
       if (f.type && f.type !== "output") continue;
       const params = new URLSearchParams({ filename: f.filename, subfolder: f.subfolder ?? "", type: f.type ?? "output" });
       const res = await fetch(`${opts.comfyUrl}/view?${params}`, { signal: reqSignal(120_000, opts.signal) });
-      if (!res.ok) continue;
+      if (!res.ok) {
+        attempted++;
+        continue;
+      }
       const buf = new Uint8Array(await res.arrayBuffer());
       const ext = (f.filename.match(/\.[a-z0-9]+$/i)?.[0] ?? ".png").toLowerCase();
       const name = `${opts.outPrefix}${n === 0 ? "" : `-${n}`}${ext}`;
@@ -327,7 +337,19 @@ async function collectOutputs(opts: ComfyGenOpts, outputs: Record<string, any>):
       n++;
     }
   }
-  if (saved.length === 0) throw new Error("ComfyUI 完成但未找到产物文件（检查模板里的输出节点）");
+  if (saved.length === 0) {
+    // 这两种情况的下一步动作完全相反，压成一句会把人引偏
+    if (attempted > 0) {
+      throw new ProviderError(
+        "transient",
+        `ComfyUI 生成完成但 ${attempted} 个产物全部下载失败（/view 不可达或返回错误）。检查 ComfyUI 是否还活着、磁盘是否写满，然后重试。`,
+      );
+    }
+    throw new ProviderError(
+      "config",
+      "ComfyUI 完成但这份 workflow 没有产出任何文件——模板里缺输出节点（SaveImage / SaveVideo 等），检查 templates/ 里的图。",
+    );
+  }
   return saved;
 }
 

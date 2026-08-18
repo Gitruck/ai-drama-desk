@@ -16,6 +16,7 @@ import type { CharRefMode, ComfyWorkflowConfig, GenJob, JobKind, JobPhase, Proje
 import { getGpuLease, releaseGpu, tryAcquireGpu } from "./gpu-lease.ts";
 import { artifactPrefix, artifactTs } from "../../shared/contracts/artifact-name.ts";
 import { affinity, weightsOf } from "./weight-affinity.ts";
+import { ProviderError, failureKindOf } from "./failure.ts";
 
 const jobs: GenJob[] = [];
 let seq = 0;
@@ -412,7 +413,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
         outputs = await mockKeyframe({ outDir, outPrefix: prefix, label: `${shotKey(shot.index)} ${shot.title}`, width: cfg.keyframeWidth, height: cfg.keyframeHeight });
       } else if (job.provider === "comfyui-image" || job.provider === "comfyui-image2") {
         const wf = job.provider === "comfyui-image2" ? cfg.comfyImage2 : cfg.comfyImage;
-        if (!wf) throw new Error(`未配置图像 workflow（settings → ${job.provider === "comfyui-image2" ? "comfyImage2" : "comfyImage"}）`);
+        if (!wf) throw new ProviderError("config", `未配置图像 workflow（settings → ${job.provider === "comfyui-image2" ? "comfyImage2" : "comfyImage"}）`);
         const styleLora = job.provider === "comfyui-image2" ? style?.lora : undefined;
         if (job.provider === "comfyui-image2" && !styleLora) {
           throw new StyleError("当前项目画风未绑定 LoRA，不能运行 B 档", 409, "CONFLICT");
@@ -440,7 +441,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           ...comfyCommon,
         });
       } else if (job.provider === "seedream-image") {
-        if (!cfg.arkApiKey) throw new Error("未配置 arkApiKey（火山方舟 API Key）");
+        if (!cfg.arkApiKey) throw new ProviderError("config", "未配置 arkApiKey（火山方舟 API Key）");
         // multi-image 策略：多图直喂集（默认全选 − excluded），预算 10，按角色分组连续编号。
         const plan = assembleRefs(p, shot, style, cfg, job.provider);
         if (plan.warnings.length > 0) job.warnings = [...(job.warnings ?? []), ...plan.warnings];
@@ -456,7 +457,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           signal,
         });
       } else if (job.provider === "pixmind-image") {
-        if (!cfg.pixmindKey) throw new Error("未配置 pixmindKey（PixMind API Key）");
+        if (!cfg.pixmindKey) throw new ProviderError("config", "未配置 pixmindKey（PixMind API Key）");
         // multi-image 策略：多图直喂集，预算 14（nano-banana 系上限）
         const plan = assembleRefs(p, shot, style, cfg, job.provider);
         if (plan.warnings.length > 0) job.warnings = [...(job.warnings ?? []), ...plan.warnings];
@@ -512,8 +513,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
       if (job.provider === "mock-video") {
         outputs = await mockVideo({ outDir, outPrefix: prefix, imagePath: kfPath, durationSec, width: cfg.videoWidth, height: cfg.videoHeight, fps: cfg.videoFps });
       } else if (job.provider === "comfyui-video") {
-        if (!cfg.comfyVideo) throw new Error("未配置视频 workflow（settings → comfyVideo）");
-        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        if (!cfg.comfyVideo) throw new ProviderError("config", "未配置视频 workflow（settings → comfyVideo）");
+        if (!kfPath) throw new ProviderError("config", "该镜还没有 keyframe，先出图再出片");
         outputs = await comfyGenerate({
           comfyUrl: cfg.comfyUrl,
           wf: cfg.comfyVideo,
@@ -529,8 +530,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           ...comfyCommon,
         });
       } else if (job.provider === "hunyuan-video") {
-        if (!cfg.comfyVideoHunyuan) throw new Error("未配置混元 workflow（settings → comfyVideoHunyuan）");
-        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        if (!cfg.comfyVideoHunyuan) throw new ProviderError("config", "未配置混元 workflow（settings → comfyVideoHunyuan）");
+        if (!kfPath) throw new ProviderError("config", "该镜还没有 keyframe，先出图再出片");
         // 混元原生 480p（848×480），分辨率由模板固定、不注入 width/height；24fps、length=4n+1
         outputs = await comfyGenerate({
           comfyUrl: cfg.comfyUrl,
@@ -545,8 +546,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           ...comfyCommon,
         });
       } else if (job.provider === "h3-video") {
-        if (!cfg.comfyVideoH3) throw new Error("未配置 H3 workflow（settings → comfyVideoH3）");
-        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        if (!cfg.comfyVideoH3) throw new ProviderError("config", "未配置 H3 workflow（settings → comfyVideoH3）");
+        if (!kfPath) throw new ProviderError("config", "该镜还没有 keyframe，先出图再出片");
         // H3 无负分支（权重已 CFG 蒸馏），不传 negative；固定 24fps，帧数按 17k+5 栅格吸附
         outputs = await comfyGenerate({
           comfyUrl: cfg.comfyUrl,
@@ -562,8 +563,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           ...comfyCommon,
         });
       } else if (job.provider === "h3-video-final") {
-        if (!cfg.comfyVideoH3Final) throw new Error("未配置 H3 成片档 workflow（settings → comfyVideoH3Final）");
-        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        if (!cfg.comfyVideoH3Final) throw new ProviderError("config", "未配置 H3 成片档 workflow（settings → comfyVideoH3Final）");
+        if (!kfPath) throw new ProviderError("config", "该镜还没有 keyframe，先出图再出片");
         // 与抽卡档同为无负分支、24fps、17k+5 栅格；差别在配方（步数/SigmaShift/加速 LoRA），
         // 全写死在模板图里。分辨率也归模板管，故不传 width/height（同混元档的先例）。
         outputs = await comfyGenerate({
@@ -578,8 +579,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           ...comfyCommon,
         });
       } else if (job.provider === "fal-video") {
-        if (!cfg.falKey) throw new Error("未配置 falKey");
-        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        if (!cfg.falKey) throw new ProviderError("config", "未配置 falKey");
+        if (!kfPath) throw new ProviderError("config", "该镜还没有 keyframe，先出图再出片");
         outputs = await falVideoGenerate({
           falKey: cfg.falKey,
           model: cfg.falVideoModel,
@@ -594,8 +595,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
           signal,
         });
       } else if (job.provider === "pixmind-video") {
-        if (!cfg.pixmindKey) throw new Error("未配置 pixmindKey（PixMind API Key）");
-        if (!kfPath) throw new Error("该镜还没有 keyframe，先出图再出片");
+        if (!cfg.pixmindKey) throw new ProviderError("config", "未配置 pixmindKey（PixMind API Key）");
+        if (!kfPath) throw new ProviderError("config", "该镜还没有 keyframe，先出图再出片");
         // eco 线路无 negative 字段（supports.negativePrompt=false），不传负面；音轨默认开（核心能力）
         outputs = await pixmindVideoGenerate({
           pixmindKey: cfg.pixmindKey,
@@ -639,6 +640,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     } else {
       job.status = "error";
       job.error = e instanceof Error ? e.message : String(e);
+      job.failureKind = failureKindOf(e); // 分类在抛出点已定，这里只是搬运，不猜
     }
     // 本地任务非正常结束（失速/孤儿/OOM/中止）后，「显存里装着什么」已不可推断，
     // 别拿一个作废的指纹去给下一轮排序
@@ -670,7 +672,7 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
     outputs = await mockKeyframe({ outDir, outPrefix: prefix, label: `${charName} ${mode}`, width: cfg.keyframeWidth, height: cfg.keyframeHeight });
   } else if (job.provider === "comfyui-image" || job.provider === "comfyui-image2") {
     const wf = job.provider === "comfyui-image2" ? cfg.comfyImage2 : cfg.comfyImage;
-    if (!wf) throw new Error(`未配置图像 workflow（settings → ${job.provider === "comfyui-image2" ? "comfyImage2" : "comfyImage"}）`);
+    if (!wf) throw new ProviderError("config", `未配置图像 workflow（settings → ${job.provider === "comfyui-image2" ? "comfyImage2" : "comfyImage"}）`);
     const styleLora = job.provider === "comfyui-image2" ? style?.lora : undefined;
     if (job.provider === "comfyui-image2" && !styleLora) {
       throw new StyleError("当前项目画风未绑定 LoRA，不能运行 B 档", 409, "CONFLICT");
@@ -696,7 +698,7 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
       stallToleranceMs: cfg.comfyStallToleranceMs,
     });
   } else if (job.provider === "seedream-image") {
-    if (!cfg.arkApiKey) throw new Error("未配置 arkApiKey（火山方舟 API Key）");
+    if (!cfg.arkApiKey) throw new ProviderError("config", "未配置 arkApiKey（火山方舟 API Key）");
     outputs = await seedreamGenerate({
       arkApiKey: cfg.arkApiKey,
       model: cfg.seedreamModel,
@@ -709,7 +711,7 @@ async function runCharRefJob(job: GenJob, p: Project, style: StyleProfile | null
       signal,
     });
   } else if (job.provider === "pixmind-image") {
-    if (!cfg.pixmindKey) throw new Error("未配置 pixmindKey（PixMind API Key）");
+    if (!cfg.pixmindKey) throw new ProviderError("config", "未配置 pixmindKey（PixMind API Key）");
     outputs = await pixmindImageGenerate({
       pixmindKey: cfg.pixmindKey,
       model: cfg.pixmindImageModel,
