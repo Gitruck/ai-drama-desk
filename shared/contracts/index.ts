@@ -151,6 +151,12 @@ export interface ComfyRuntimeInfo {
   torchVersion?: string;
   cudaAvailable?: boolean;
   devices: Array<{ name: string; type?: string; vramTotal?: number; vramFree?: number }>;
+  /**
+   * 启动性能提示（纯观测，不影响任何 ready 判定）。
+   * 针对「能跑但悄悄慢」的已知配置：未带注意力加速参数、cu13 以下构建配量化权重。
+   * 启动参数不可得（旧版 ComfyUI 无 argv）时为空——不猜。
+   */
+  launchHints?: string[];
 }
 
 export interface ProviderDiagnostic {

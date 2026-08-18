@@ -1292,6 +1292,9 @@ function ComfyDiagnosticPanel({ diagnostic }: { diagnostic: any }) {
       <span className="dim">{diagnostic.comfyUrl}</span>
       <span>队列：{diagnostic.queue.running ?? "?"} 运行 / {diagnostic.queue.pending ?? "?"} 等待</span>
     </div>
+    {diagnostic.runtime?.launchHints?.map((hint: string, i: number) => (
+      <p key={`lh-${i}`} className="launch-hint">⚡ {hint}</p>
+    ))}
     {diagnostic.runtime && <div className="runtime-strip">
       <span>Python {diagnostic.runtime.pythonVersion ?? "?"}</span><span>Torch {diagnostic.runtime.torchVersion ?? "?"}</span><span>CUDA {diagnostic.runtime.cudaAvailable ? "可用" : "未报告"}</span>
       {diagnostic.runtime.devices.map((device: any, index: number) => <span key={`${device.name}-${index}`}>{device.name} · 显存 {bytes(device.vramFree)} / {bytes(device.vramTotal)}</span>)}

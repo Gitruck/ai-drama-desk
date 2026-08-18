@@ -113,6 +113,43 @@ python main.py                                        # 启动日志应出现 Fo
 
 > 驱动只要满足 CUDA 13 的最低版本即可，**不需要**为此重装显卡驱动。若因故只能停在 cu12x，就改用非量化或 `fp8_scaled` 以外的权重档，别在 cu12x 上跑量化档白白挨慢。
 
+#### 推荐启动参数：一条 H3 片端到端快 41.5%（实测）
+
+裸起 `python main.py` 走的是 pytorch attention。本机 RTX 4090 实测（一条 5.17 秒 H3 成片，
+详细基准与判据见维护者基线记录），三段增益可叠加：
+
+```bash
+python main.py --use-ck-attention --fast fp16_accumulation --reserve-vram 2.0
+```
+
+| 参数 | 做什么 | 单项增益 |
+|---|---|---|
+| `--use-ck-attention` | 换 comfy-kitchen 的 int8 attention（ComfyUI 自家 pin 的依赖，H3 有专属预量化路径） | 约 26% |
+| `--fast fp16_accumulation` | fp16 累加 | 约 8% |
+| `--reserve-vram 2.0` | 给系统/桌面程序多留 2GiB 显存 headroom | 约 7% |
+
+**三个参数缺一不可，最容易被漏掉的是 `--reserve-vram`**：实测去掉它之后采样速度完全一样，
+但省下的时间会被 VAE 解码 124 帧时与常驻权重的显存争抢全部吃回去，端到端只快 3.8%。
+端到端合计：53.1s → 31.1s。
+
+两点注意：
+
+- **换 attention 后端会改变同 seed 的产出**（不是变差，是采样轨迹被推到另一个同样合理的样本）。
+  已定稿、靠 seed 复现的镜头，先出片存档再切换。
+- **Windows 上 8188 端口可能绑不上**（WinError 10013）：Hyper-V / Docker / WSL 会把动态端口段
+  划进系统保留区间，8188 可能正好落在里面。修法二选一（都要管理员）：
+  `net stop winnat && net start winnat`（临时，短暂打断 Docker/WSL 网络）或
+  `netsh int ipv4 set dynamicport tcp start=49152 num=16384`（永久，重启生效）。
+
+仓内提供了带自检的启动脚本（端口自检给出上述修法、起服后从日志自证 attention 后端真的生效）：
+
+```bash
+python scripts/start-comfyui.py <你的ComfyUI目录>
+```
+
+没带这些参数也能跑，只是慢——工作台的「设置与诊断」页会检测到并给出黄色提示（ComfyUI 的
+`/system_stats` 暴露启动参数，诊断顺带读了）。
+
 #### 模型目录放哪
 
 模型走分层加载，权重读取在出片热路径上。**放本机 NVMe，别放机械盘、更别放 SMB/NFS 网络盘**（网络延迟会把逐层换页拖成不可用）。若系统盘空间不够，用 ComfyUI 根目录的 `extra_model_paths.yaml`（从 `.example` 复制改名）把 `models/` 指到另一块本地盘：
@@ -130,7 +167,7 @@ mypaths:
 
 工作台「设置」页的 ComfyUI 诊断会分层报告缺什么（插件节点 / 模型文件），按提示补齐即可。ComfyUI 未装或未启动时状态栏显示离线，不影响 mock / 云端出口。
 
-> **许可边界**：ComfyUI 为 GPL-3.0 项目。本仓不包含、不派生其任何代码，仅通过 HTTP API 与本机运行的 ComfyUI 实例通信。
+> **许可边界**：ComfyUI 为 GPL-3.0 项目。本仓不包含、不派生其任何代码，仅通过 HTTP API 与本机运行的 ComfyUI 实例通信；随附的 `scripts/start-comfyui.py` 仅以子进程方式启动你自行安装的 ComfyUI 并读取其标准输出，同样不包含、不派生其代码。
 
 ### c) 模型下载清单（自行从原始发布方获取）
 

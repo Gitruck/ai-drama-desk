@@ -452,13 +452,48 @@ function endpointComfyUrl(value: string): string {
   }
 }
 
+/**
+ * 「能跑但悄悄慢」的启动配置检测。第一例是 cu130 量化静默降级（README 记了教训
+ * 却只留人工检查），第二例是裸起 main.py 少拿 41.5% 提速。同类问题同类解法：
+ * 别指望人读文档，让诊断层自动报。纯观测——不影响 ready、不拦操作、argv 不可得不猜。
+ */
+function launchHints(system: Record<string, any>, cudaAvailable: boolean): string[] {
+  const hints: string[] = [];
+  const argv = Array.isArray(system.argv) ? system.argv.map(String) : null;
+  if (argv && cudaAvailable) {
+    const hasAttn = argv.some((a) => ["--use-ck-attention", "--use-sage-attention", "--use-flash-attention"].includes(a));
+    const hasFast = argv.includes("--fast");
+    if (!hasAttn || !hasFast) {
+      hints.push(
+        "ComfyUI 未带加速参数启动，H3 出片会比调优配置慢约 40%（本机 4090 实测端到端 53.1s → 31.1s）。" +
+        "推荐启动参数：--use-ck-attention --fast fp16_accumulation --reserve-vram 2.0，" +
+        "或直接用仓内 scripts/start-comfyui.py 起服（自带端口自检与后端自证）。",
+      );
+    }
+  }
+  // cu13 以下构建 + 量化权重 = 优化 CUDA 算子被静默关掉，int8 比不量化还慢一倍多
+  const torch = typeof system.pytorch_version === "string" ? system.pytorch_version : "";
+  const cu = torch.match(/\+cu(\d+)/);
+  if (cu && Number(cu[1]) < 130) {
+    hints.push(
+      `PyTorch 是 ${torch} 构建——comfy-kitchen 在 CUDA < 13 时会静默关掉优化算子，` +
+      "仓内模板全是量化档，实测会比不量化还慢一倍多。换 cu130 构建：" +
+      "pip install --index-url https://download.pytorch.org/whl/cu130 torch torchvision torchaudio",
+    );
+  }
+  return hints;
+}
+
 function runtimeInfo(systemStats: Record<string, any>): ComfyRuntimeInfo {
   const system = systemStats.system && typeof systemStats.system === "object" ? systemStats.system : {};
   const devices = Array.isArray(systemStats.devices) ? systemStats.devices : [];
+  const cudaAvailable = devices.some((device: any) => typeof device?.type === "string" && /cuda/i.test(device.type));
+  const hints = launchHints(system, cudaAvailable);
   return {
+    ...(hints.length ? { launchHints: hints } : {}),
     pythonVersion: typeof system.python_version === "string" ? system.python_version : undefined,
     torchVersion: typeof system.pytorch_version === "string" ? system.pytorch_version : undefined,
-    cudaAvailable: devices.some((device: any) => typeof device?.type === "string" && /cuda/i.test(device.type)),
+    cudaAvailable,
     devices: devices.map((device: any) => ({
       name: String(device?.name ?? "未知设备"),
       type: typeof device?.type === "string" ? device.type : undefined,

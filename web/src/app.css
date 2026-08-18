@@ -362,6 +362,9 @@ button.job-chip-cancel:active { transform: none; }
 .media-delete { position: absolute; top: 5px; right: 5px; width: 25px; min-height: 25px; height: 25px; padding: 0; border-color: rgba(255,255,255,.7); border-radius: 50%; background: rgba(41,40,32,.82); color: #fff; line-height: 1; opacity: 0; }
 .media-item:hover .media-delete, .style-ref-item:hover .media-delete, .media-delete:focus-visible { opacity: 1; }
 .media-delete:hover { border-color: #fff; background: var(--bad); }
+/* 启动性能提示：黄色信息条——能跑只是慢，不是故障，所以不用红 */
+.launch-hint { margin: 0 0 10px; padding: 9px 13px; border: 1px solid rgba(196,148,32,.45); border-radius: 9px; background: rgba(196,148,32,.09); color: var(--dim); font-size: 12px; line-height: 1.7; }
+
 /* 档位徽章：只标出身、不暗示优劣，故两档同色同权重 */
 .media-badge { position: absolute; top: 5px; left: 5px; padding: 2px 7px; border-radius: 999px; background: rgba(41,40,32,.82); color: #fff; font-size: 10px; line-height: 1.5; letter-spacing: .04em; pointer-events: none; }
 
