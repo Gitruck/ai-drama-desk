@@ -15,6 +15,7 @@ import { seedreamGenerate } from "./providers/seedream.ts";
 import type { CharRefMode, ComfyWorkflowConfig, GenJob, JobKind, Project, StudioConfig, StyleProfile } from "./types.ts";
 import { getGpuLease, releaseGpu, tryAcquireGpu } from "./gpu-lease.ts";
 import { artifactPrefix, artifactTs } from "../../shared/contracts/artifact-name.ts";
+import { affinity, weightsOf } from "./weight-affinity.ts";
 
 const jobs: GenJob[] = [];
 let seq = 0;
@@ -37,6 +38,14 @@ const LANE_LIMIT: Record<Lane, number> = { local: 1, cloud: 2, mock: 2 };
  */
 const LOCAL_GPU_PROVIDERS = new Set(["hunyuan-video", "h3-video", "h3-video-final"]);
 
+/** pickNext 的返回：任务 + 它的权重指纹（指纹在选取阶段算好，派发段只做赋值）。 */
+type PickedJob = { job: GenJob; weights: Set<string> | null };
+
+/** 被更亲和的后来者插队多少次后强制放行。与换模代价同量纲，且桩测可确定性断言。 */
+const DEFAULT_AFFINITY_MAX_SKIPS = 16;
+/** 每条排队任务被插队的次数；任务终态后清掉，别攒着泄漏。 */
+const skipCount = new Map<string, number>();
+
 /** 出片出口 -> 它吃的 workflow 槽。产物命名要据此判断种子是否真会进图。 */
 function videoWorkflowOf(cfg: StudioConfig, provider: string): ComfyWorkflowConfig | undefined {
   switch (provider) {
@@ -52,6 +61,97 @@ export function laneOf(provider: string): Lane {
   if (provider.startsWith("comfyui") || LOCAL_GPU_PROVIDERS.has(provider)) return "local";
   if (provider.startsWith("mock")) return "mock";
   return "cloud";
+}
+
+/** 出口 -> 它吃的 workflow 槽（含出图，出图同样吃 local 车道与同一块显存）。 */
+function workflowOf(cfg: StudioConfig, provider: string): ComfyWorkflowConfig | undefined {
+  switch (provider) {
+    case "comfyui-image": return cfg.comfyImage;
+    case "comfyui-image2": return cfg.comfyImage2;
+    case "comfyui-video": return cfg.comfyVideo;
+    case "hunyuan-video": return cfg.comfyVideoHunyuan;
+    case "h3-video": return cfg.comfyVideoH3;
+    case "h3-video-final": return cfg.comfyVideoH3Final;
+    default: return undefined;
+  }
+}
+
+/**
+ * 上一个已派发的 local 任务留下的权重指纹。null = 无先验（退化成入队顺序）。
+ * 只在 local 任务真正被派发时更新；失去依据时作废（见 invalidateLocalWeights）。
+ */
+let lastLocalWeights: Set<string> | null = null;
+
+/**
+ * 作废「显存里还热着哪组权重」的信念。
+ * 两种情形下这个信念不再成立：GPU 租约被 LoRA 训练占用过、上一轮以失联/任务丢失告终。
+ * 实测已证 ComfyUI 每执行一个节点就清掉上一代 ModelPatcher，训练跑完后「H3 还热着」是假的。
+ */
+export function invalidateLocalWeights(): void {
+  lastLocalWeights = null;
+}
+
+/**
+ * 选下一个可派发的任务。
+ * cloud / mock 车道**严格保持先进先出**，一行不动；
+ * local 车道按「与上一个 local 任务的权重交集大小降序、入队时间升序」选，
+ * 并用被插队次数兜住饥饿。
+ */
+function pickNext(runningByLane: Record<Lane, number>): PickedJob | undefined {
+  const ready = (j: GenJob) => {
+    const lane = laneOf(j.provider);
+    if (j.status !== "queued" || runningByLane[lane] >= LANE_LIMIT[lane]) return false;
+    return lane !== "local" || getGpuLease() === null;
+  };
+
+  const localReady = jobs.filter((j) => ready(j) && laneOf(j.provider) === "local");
+  if (localReady.length === 0) {
+    // 非 local 车道：原样 FIFO
+    const firstNonLocal = jobs.find((j) => ready(j) && laneOf(j.provider) !== "local");
+    return firstNonLocal ? { job: firstNonLocal, weights: null } : undefined;
+  }
+
+  // 配置读坏不该弄死调度：亲和排序是优化不是正确性，读不到就退化成 FIFO。
+  // （这条路径跑在 pump 的微任务里，异常逃逸出去会整进程退出。）
+  let cfg: StudioConfig | null = null;
+  try {
+    cfg = loadConfig();
+  } catch (e) {
+    console.error("[调度] 读配置失败，本轮退化为先进先出", e);
+  }
+  const maxSkips = cfg?.localLaneAffinityMaxSkips ?? DEFAULT_AFFINITY_MAX_SKIPS;
+  const head = localReady[0]!; // 入队最早的那条
+
+  let chosen = head;
+  // maxSkips = 0 即严格 FIFO（运维回退开关）；无先验、或配置读不到时同样退化成 FIFO
+  if (cfg && maxSkips > 0 && lastLocalWeights && lastLocalWeights.size > 0) {
+    // 已被插队到上限的那条必须放行，否则会饿死
+    const starved = localReady.find((j) => (skipCount.get(j.id) ?? 0) >= maxSkips);
+    if (starved) {
+      chosen = starved;
+    } else {
+      let best = -1;
+      for (const j of localReady) {
+        const score = affinity(lastLocalWeights, weightsOf(workflowOf(cfg, j.provider), j.provider));
+        if (score > best) {
+          best = score;
+          chosen = j;
+        }
+      }
+    }
+  }
+
+  if (chosen !== head) {
+    // 被插队的都记一笔——次数与换模代价同量纲，且能在桩测里确定性断言
+    for (const j of localReady) {
+      if (j === chosen) break;
+      skipCount.set(j.id, (skipCount.get(j.id) ?? 0) + 1);
+    }
+  }
+  // 指纹在这里就算好随 job 一起交出去：dispatchOnce 里那段「已改全局状态、
+  // 尚未注册回收回调」的窗口必须不可抛，否则任务会永远卡在 running、租约没人还、
+  // 且因为 controllers 里没有句柄而取消不掉。
+  return { job: chosen, weights: cfg ? weightsOf(workflowOf(cfg, chosen.provider), chosen.provider) : null };
 }
 
 export function listJobs(projectId?: string): GenJob[] {
@@ -72,6 +172,7 @@ export function dismissJobs(opts: { projectId?: string; ids?: string[] } = {}): 
     if (opts.projectId && j.projectId !== opts.projectId) continue;
     if (idSet && !idSet.has(j.id)) continue;
     jobs.splice(i, 1);
+    skipCount.delete(j.id);
     removed++;
   }
   return removed;
@@ -92,6 +193,7 @@ export function cancelJob(id: string): GenJob | null {
     job.status = "canceled";
     job.finishedAt = Date.now();
     controllers.delete(job.id);
+    skipCount.delete(job.id);
     return job;
   }
   controllers.get(job.id)?.abort(new Error("用户中止"));
@@ -194,36 +296,62 @@ export function enqueueAuto(projectId: string, kfProvider: string, vidProvider: 
 }
 
 let pumping = false;
+/** 派发循环在跑时又来了唤醒请求：记下来，让循环收尾前再扫一遍，而不是清掉守卫。 */
+let pumpRequested = false;
+
+/**
+ * 派发一轮：把当前能开跑的都开起来。
+ * **必须整体同步执行**——中途一旦 await，另一条派发循环就能在
+ * `next.status = "running"` 落定之前挤进来，把同一个 job 派发两次。
+ * 所以选取逻辑（含权重指纹查表）一律走同步 IO + 缓存，别改成 async。
+ */
+function dispatchOnce(): void {
+  while (true) {
+    const runningByLane: Record<Lane, number> = { local: 0, cloud: 0, mock: 0 };
+    for (const j of jobs) if (j.status === "running") runningByLane[laneOf(j.provider)]++;
+    const picked = pickNext(runningByLane);
+    if (!picked) break;
+    const next = picked.job;
+    const lane = laneOf(next.provider);
+    // 抢不到租约就收工，等下次唤醒。`continue` 会原地忙等——pickNext 的前置条件目前
+    // 恰好走不到这一步，但那是运气，不该拿 CPU 空转做兜底。
+    if (lane === "local" && !tryAcquireGpu("generation", next.id)) break;
+    next.status = "running";
+    next.startedAt = Date.now();
+    // 从这里到 .finally 挂上为止必须【不可抛】：中途抛出会让任务永远停在 running、
+    // GPU 租约没人归还、controllers 里也没句柄（取消不掉），local 车道被永久焊死。
+    // 所以指纹是 pickNext 里算好的纯值，这里只做赋值。
+    if (lane === "local") lastLocalWeights = picked.weights;
+    skipCount.delete(next.id);
+    const controller = new AbortController();
+    controllers.set(next.id, controller);
+    // 不 await 串死其他车道；每个 job 完成后再 pump
+    void runJob(next, controller.signal).finally(() => {
+      controllers.delete(next.id);
+      if (lane === "local") releaseGpu(next.id);
+      pump();
+    });
+    // local 车道串行：本轮已派 local 后继续找其他车道的活
+  }
+}
+
 function pump() {
+  // 先登记请求再看守卫：循环在跑时不清守卫（清掉就等于没守卫，两条循环会并存），
+  // 而是让它收尾前多扫一遍，唤醒一次都不会丢。
+  pumpRequested = true;
   if (pumping) return;
   pumping = true;
-  queueMicrotask(async () => {
+  queueMicrotask(() => {
     try {
-      while (true) {
-        const runningByLane: Record<Lane, number> = { local: 0, cloud: 0, mock: 0 };
-        for (const j of jobs) if (j.status === "running") runningByLane[laneOf(j.provider)]++;
-        const next = jobs.find((j) => {
-          const lane = laneOf(j.provider);
-          if (j.status !== "queued" || runningByLane[lane] >= LANE_LIMIT[lane]) return false;
-          return lane !== "local" || getGpuLease() === null;
-        });
-        if (!next) break;
-        const lane = laneOf(next.provider);
-        // 抢不到租约就收工，等下次唤醒。`continue` 会原地忙等——find 的前置条件目前
-        // 恰好走不到这一步，但那是运气，不该拿 CPU 空转做兜底。
-        if (lane === "local" && !tryAcquireGpu("generation", next.id)) break;
-        next.status = "running";
-        next.startedAt = Date.now();
-        const controller = new AbortController();
-        controllers.set(next.id, controller);
-        // 不 await 串死其他车道；每个 job 完成后再 pump
-        void runJob(next, controller.signal).finally(() => {
-          controllers.delete(next.id);
-          if (lane === "local") releaseGpu(next.id);
-          pumping = false;
-          pump();
-        });
-        // local 车道串行：本轮已派 local 后继续找其他车道的活
+      while (pumpRequested) {
+        pumpRequested = false;
+        // 调度器是全局单点，且这里跑在微任务里——异常逃逸出去会整进程退出，
+        // 把「单任务可恢复错误」升级成「所有在途任务陪葬」。一律就地吞并打日志。
+        try {
+          dispatchOnce();
+        } catch (e) {
+          console.error("[调度] 派发轮出错，本轮跳过（队列不受影响）", e);
+        }
       }
     } finally {
       pumping = false;
@@ -233,6 +361,8 @@ function pump() {
 
 /** LoRA 租约释放后唤醒可能在等待的本地生成任务。 */
 export function resumeGenerationPump(): void {
+  // 训练刚占用过 GPU：显存里早不是我们上次留下的那组权重了，先前的指纹作废
+  invalidateLocalWeights();
   pump();
 }
 
@@ -494,6 +624,9 @@ async function runJob(job: GenJob, signal: AbortSignal) {
       job.status = "error";
       job.error = e instanceof Error ? e.message : String(e);
     }
+    // 本地任务非正常结束（失速/孤儿/OOM/中止）后，「显存里装着什么」已不可推断，
+    // 别拿一个作废的指纹去给下一轮排序
+    if (laneOf(job.provider) === "local") invalidateLocalWeights();
   } finally {
     // 不可中断的 provider（mock）可能在 abort 之后才跑完；此时状态已是 canceled，不倒回 done。
     if (signal.aborted && job.status === "done") job.status = "canceled";

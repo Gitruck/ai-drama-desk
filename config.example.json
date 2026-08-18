@@ -113,6 +113,8 @@
     "pixmind-image": { "refStrategy": "multi-image", "refBudget": 14 },
     "mock-image": { "refStrategy": "none", "refBudget": 0 }
   },
+  "_说明_localLaneAffinityMaxSkips": "本地车道权重亲和排序的饥饿护栏：某任务被更亲和的后来者插队这么多次后强制放行。0 = 严格先进先出（运维回退开关）。这是调度细节，界面上不暴露。",
+  "localLaneAffinityMaxSkips": 16,
   "prices": {
     "comfyui-image": 0,
     "comfyui-image2": 0,

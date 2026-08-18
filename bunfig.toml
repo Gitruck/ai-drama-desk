@@ -1,0 +1,3 @@
+[test]
+# 让测试跑在隔离的数据目录上，永远碰不到 data/ 里的真实配置与密钥。
+preload = ["./test/setup.ts"]

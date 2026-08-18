@@ -1,10 +1,22 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_CONFIG, type StudioConfig } from "./types.ts";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const DATA_DIR = join(ROOT, "data");
+/**
+ * 数据根目录。默认 `<仓库>/data`，可用 `GITRUCK_DESK_DATA_DIR` 覆盖。
+ *
+ * 存在的理由是安全而非灵活：这里面有 config.json（装着 falKey / arkApiKey /
+ * pixmindKey 三把明文密钥）与全部项目产物，而测试要验配置相关行为就得改 config.json。
+ * 没有这个覆盖时，测试只能去动用户真实的那一份、靠 try/finally 还原——
+ * 而 finally 在进程被中断时不保证执行。2026-08-18 就是这样把主理人的三把 Key
+ * 弄丢的：一个探针把 config.json 改坏以触发异常，异常恰好把还原的 finally 吃掉了。
+ * 现在测试统一跑在隔离目录上（见 test/setup.ts），真实数据碰都碰不到。
+ */
+export const DATA_DIR = process.env.GITRUCK_DESK_DATA_DIR
+  ? resolve(process.env.GITRUCK_DESK_DATA_DIR)
+  : join(ROOT, "data");
 export const STYLES_DIR = join(DATA_DIR, "styles");
 export const PROJECTS_DIR = join(DATA_DIR, "projects");
 export const LORA_DIR = join(DATA_DIR, "lora");

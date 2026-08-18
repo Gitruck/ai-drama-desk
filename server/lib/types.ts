@@ -220,6 +220,11 @@ export interface StudioConfig {
    * 分辨率由模板固定、不注入（照 comfyVideoHunyuan 先例）。
    */
   comfyVideoH3Final?: ComfyWorkflowConfig;
+  /**
+   * local 车道权重亲和排序的饥饿护栏：某任务被更亲和的后来者插队这么多次后强制放行。
+   * 0 = 严格先进先出（运维回退开关）。这是系统自裁的调度细节，不进 UI 设置面板。
+   */
+  localLaneAffinityMaxSkips?: number;
   falKey?: string;
   /** 火山方舟 API Key（Seedream 图像出口） */
   arkApiKey?: string;
@@ -350,6 +355,7 @@ export const DEFAULT_CONFIG: StudioConfig = {
       frames: { id: "5", field: "length" },
     },
   },
+  localLaneAffinityMaxSkips: 16,
   falVideoModel: "fal-ai/wan/v2.2-a14b/image-to-video",
   pixmindVideoModel: "minimax-h3-eco",
   pixmindVideoResolution: "480p",
