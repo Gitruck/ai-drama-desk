@@ -114,6 +114,8 @@
     "mock-image": { "refStrategy": "none", "refBudget": 0 }
   },
   "_说明_localLaneAffinityMaxSkips": "本地车道权重亲和排序的饥饿护栏：某任务被更亲和的后来者插队这么多次后强制放行。0 = 严格先进先出（运维回退开关）。这是调度细节，界面上不暴露。",
+  "_说明_autoRetryLimit": "本地暂时性故障的自动重试上限（0 = 关停）。只对「零产物、零费用、纯本机」的失败生效；云出口一律不重试——已建单即已扣费，判错就是二次扣钱。",
+  "autoRetryLimit": 1,
   "localLaneAffinityMaxSkips": 16,
   "prices": {
     "comfyui-image": 0,

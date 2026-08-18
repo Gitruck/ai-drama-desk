@@ -102,6 +102,10 @@ function pickNext(runningByLane: Record<Lane, number>): PickedJob | undefined {
   const ready = (j: GenJob) => {
     const lane = laneOf(j.provider);
     if (j.status !== "queued" || runningByLane[lane] >= LANE_LIMIT[lane]) return false;
+    // 退避中：还没到点就跳过。退避期间它是 queued 而不是 running，
+    // 所以既不占并发名额也不持 GPU 租约——这是既有的「中止 MUST 立即释放车道」
+    // 与「MUST NOT 忙等」两条约束要求的做法。
+    if (j.readyAt && j.readyAt > Date.now()) return false;
     return lane !== "local" || getGpuLease() === null;
   };
 
@@ -203,6 +207,9 @@ export function cancelJob(id: string): GenJob | null {
   if (job.status === "queued") {
     job.status = "canceled";
     job.finishedAt = Date.now();
+    // 行为上是兜底：ready() 已要求 status==="queued"，已取消的选不中。
+    // 清掉是为了不让界面看到一个「已取消却还标着下次重试时刻」的自相矛盾状态。
+    job.readyAt = undefined;
     controllers.delete(job.id);
     skipCount.delete(job.id);
     return job;
@@ -304,6 +311,41 @@ export function enqueueAuto(projectId: string, kfProvider: string, vidProvider: 
     }
   }
   return out;
+}
+
+/** 退避固定 5 秒：本地 ComfyUI 要么很快回来、要么是真挂了，指数退避没意义。 */
+const RETRY_BACKOFF_MS = 5_000;
+const DEFAULT_AUTO_RETRY_LIMIT = 1;
+
+/** 单个最早到期的唤醒定时器；unref 掉，别让它拖住进程退出。 */
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleRetryWake(at: number): void {
+  const delay = Math.max(0, at - Date.now()) + 20;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    pump();
+  }, delay);
+  (retryTimer as any).unref?.();
+}
+
+/**
+ * 这次失败能不能自动重排队。
+ * 白名单极窄：只重试「暂时性故障 + 本地车道 + 零产物 + 零费用」。
+ * 云出口一条都不重试——哪怕看似「提交阶段还没建单」，那依赖上游是否
+ * 先建单后返错，判错就是二次扣费；收益极小、下行是真金白银。
+ */
+function shouldAutoRetry(job: GenJob, cfg: StudioConfig): boolean {
+  const limit = cfg.autoRetryLimit ?? DEFAULT_AUTO_RETRY_LIMIT;
+  // 显式兜底。行为上它被下一行的次数判据覆盖（limit=0 时 retryCount>=0 恒真），
+  // 留着是因为关停开关是运维的安全阀：日后若有人把次数判据改成 `> limit`
+  // 或加了下界钳制，这一行能保证开关不会悄悄失效。
+  if (limit <= 0) return false;
+  if ((job.retryCount ?? 0) >= limit) return false;   // 次数耗尽
+  if (job.failureKind !== "transient") return false;  // OOM/配置/内容/已扣费一律不重试
+  if (laneOf(job.provider) !== "local") return false; // 云出口绝不重试
+  if (job.output) return false;                       // 已有产物就不是零产物失败
+  return true;
 }
 
 let pumping = false;
@@ -638,9 +680,32 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     if (signal.aborted) {
       job.status = "canceled";
     } else {
-      job.status = "error";
-      job.error = e instanceof Error ? e.message : String(e);
-      job.failureKind = failureKindOf(e); // 分类在抛出点已定，这里只是搬运，不猜
+      const kind = failureKindOf(e); // 分类在抛出点已定，这里只是搬运，不猜
+      const msg = e instanceof Error ? e.message : String(e);
+      job.attempts = [...(job.attempts ?? []), { at: Date.now(), kind, error: msg }];
+
+      let cfg2: StudioConfig | null = null;
+      try { cfg2 = loadConfig(); } catch { /* 读不到配置就按不重试处理 */ }
+
+      if (cfg2 && shouldAutoRetry({ ...job, failureKind: kind }, cfg2)) {
+        // 回落成 queued + readyAt：退避期间不占并发名额、不持 GPU 租约。
+        // 绝不在这里 sleep 后重跑——那会攥着车道，违反既有的两条约束。
+        job.retryCount = (job.retryCount ?? 0) + 1;
+        job.status = "queued";
+        job.readyAt = Date.now() + RETRY_BACKOFF_MS;
+        job.phase = undefined;
+        job.error = undefined;
+        job.failureKind = undefined;
+        scheduleRetryWake(job.readyAt);
+      } else {
+        job.status = "error";
+        job.failureKind = kind;
+        // 摊开历次死因：只报最后一次会让「第一次是 OOM、第二次是服务没起」
+        // 这种链条完全看不出来
+        job.error = (job.attempts?.length ?? 0) > 1
+          ? job.attempts!.map((a, i) => `第${i + 1}次：${a.error}`).join("；")
+          : msg;
+      }
     }
     // 本地任务非正常结束（失速/孤儿/OOM/中止）后，「显存里装着什么」已不可推断，
     // 别拿一个作废的指纹去给下一轮排序
@@ -649,7 +714,8 @@ async function runJob(job: GenJob, signal: AbortSignal) {
     job.phase = undefined; // 阶段只描述在途任务，终态留着会误导
     // 不可中断的 provider（mock）可能在 abort 之后才跑完；此时状态已是 canceled，不倒回 done。
     if (signal.aborted && job.status === "done") job.status = "canceled";
-    job.finishedAt = Date.now();
+    // 回落成 queued 等重试的任务并没有结束，别给它盖终止时间戳
+    if (isFinished(job.status)) job.finishedAt = Date.now();
   }
 }
 

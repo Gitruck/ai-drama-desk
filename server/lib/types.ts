@@ -141,6 +141,12 @@ export interface GenJob {
   phase?: JobPhase;
   /** 失败分类（仅 status=error 时有意义）。分不清时为 unknown，见 FailureKind。 */
   failureKind?: FailureKind;
+  /** 已重试次数（0 = 首次尝试）。 */
+  retryCount?: number;
+  /** 退避到点时刻：queued 且未到点时调度器跳过它，不占并发名额也不持租约。 */
+  readyAt?: number;
+  /** 每次尝试的死因，最终失败时摊开报给用户——只报最后一次会误导。 */
+  attempts?: { at: number; kind: FailureKind; error: string }[];
   /** charref 任务：目标角色名（shotIndex 置 0 哨兵） */
   charName?: string;
   /** charref 任务：single=单人立绘 / turnaround=三视图设定表 */
@@ -243,6 +249,11 @@ export interface StudioConfig {
    * 0 = 严格先进先出（运维回退开关）。这是系统自裁的调度细节，不进 UI 设置面板。
    */
   localLaneAffinityMaxSkips?: number;
+  /**
+   * 本地暂时性故障的自动重试上限（0 = 关停）。只对「零产物、零费用、纯本机」
+   * 的失败生效；云出口一律不重试（已建单即已扣费，判错就是二次扣钱）。
+   */
+  autoRetryLimit?: number;
   falKey?: string;
   /** 火山方舟 API Key（Seedream 图像出口） */
   arkApiKey?: string;
@@ -374,6 +385,7 @@ export const DEFAULT_CONFIG: StudioConfig = {
     },
   },
   localLaneAffinityMaxSkips: 16,
+  autoRetryLimit: 1,
   falVideoModel: "fal-ai/wan/v2.2-a14b/image-to-video",
   pixmindVideoModel: "minimax-h3-eco",
   pixmindVideoResolution: "480p",
