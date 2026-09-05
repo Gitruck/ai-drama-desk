@@ -14,6 +14,8 @@
   ],
   "port": 7799,
   "comfyUrl": "http://127.0.0.1:8188",
+  "localInferenceEnabled": false,
+  "localModelsDir": "",
   "falKey": "",
   "arkApiKey": "",
   "pixmindKey": "",

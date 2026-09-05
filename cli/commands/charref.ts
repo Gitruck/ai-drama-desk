@@ -14,10 +14,10 @@ interface Job {
 export async function runCharRef(args: string[], ctx: CliContext, api: DeskApiClient): Promise<void> {
   if (!args[0] || args[0] === "help" || args[0] === "--help") {
     console.log(
-      "charref <project-id> <角色名> --mode single|turnaround [--count N] [--provider comfyui-image|comfyui-image2|seedream-image|mock-image] [--desc 补充描述]\n" +
+      "charref <project-id> <角色名> --mode single|turnaround [--count N] [--provider pixmind-image|comfyui-image|comfyui-image2|seedream-image|mock-image] [--desc 补充描述]\n" +
         "  single    = 素色底单人全身立绘\n" +
         "  turnaround= 同一角色正/侧/背三视图设定表（单人裁剪集的最佳裁剪源）\n" +
-        "  provider 缺省 comfyui-image（现成开源模型，零前置兜底：无画风/无锚图/无 LoRA 也能出）",
+        "  provider 缺省 pixmind-image（云端优先；需先配置 pixmindKey）",
     );
     return;
   }
@@ -25,7 +25,7 @@ export async function runCharRef(args: string[], ctx: CliContext, api: DeskApiCl
   const name = required(args[1], "charref 需要 <角色名>");
   const mode = flag(args, "--mode") ?? "single";
   if (mode !== "single" && mode !== "turnaround") throw new Error("--mode 只支持 single|turnaround");
-  const provider = flag(args, "--provider") ?? "comfyui-image";
+  const provider = flag(args, "--provider") ?? "pixmind-image";
   const countRaw = flag(args, "--count");
   const count = countRaw ? Math.max(1, Math.min(4, parseInt(countRaw, 10) || 1)) : 1;
   const desc = flag(args, "--desc");

@@ -1,8 +1,8 @@
 # ai-drama-desk · AI 再现制片工作台
 
-> 把「分镜稿 md」低成本变成可回轨的视频片段 —— **本地开源模型出片产线：keyframe（参考图/LoRA 锁角色与画风）→ I2V 抽卡 → 导出 return-v1 命名的片段包，可拖回任意 NLE**。
+> 把「分镜稿 md」低成本变成可回轨的视频片段 —— **默认全云端、需要时再安装本地引擎：keyframe（参考图/LoRA 锁角色与画风）→ I2V 抽卡 → 导出 return-v1 命名的片段包，可拖回任意 NLE**。
 >
-> 本地 GPU 做重活、云端出口做备选、mock 引擎零模型演练全链路。数据即文件，删目录即删数据。
+> 主安装包不含 Python、PyTorch、CUDA、ComfyUI 或模型权重；本地 GPU 是可选组件，首次点“下载本地推理组件”时才安装。数据即文件，删目录即删数据。
 
 **🔗 配套教程：[AI 视频制片全流程与 LoRA 实践](https://hocassian.feishu.cn/docx/BVond4JbnoWVLnxaWMSckBpnnig)**（完整制片流程 · Agent 中使用 skills · LoRA 实战复盘 · 与 gtrk 工作流衔接）
 
@@ -27,7 +27,7 @@
 ## 为什么用 ai-drama-desk
 
 - **分镜稿进、片段包出**：粘贴一份分镜稿 md → 结构化成分镜卡片 → 逐镜出图、出片、抽卡挑选 → 一键导出带 manifest 的回轨包，文件名即回轨定位（`<slug>-<beatId>-s<n>.mp4`）。
-- **本地开源模型的低成本产线**：Qwen-Image-Edit 出 keyframe 锁角色一致性，Wan2.2 / HunyuanVideo 1.5 蒸馏档 I2V 出片——24G 级显卡（如 4090）单机可跑；不想等本地 GPU 时切云端出口（PixMind / fal / 火山方舟）。
+- **云端开箱、本地按需**：默认使用 PixMind 云端出图与出片；确实需要本地开源模型时，才下载独立的 ComfyUI 运行组件。主包启动不会探测 8188，也不会安装 Python、PyTorch 或 CUDA。
 - **没有显卡也能用**：一把 PixMind Key 即可全云出片，默认线路 MiniMax H3 Eco **自带原生 32kHz 立体声**（480p $0.040/秒），拿到与本地 H3 档同样的音画同步能力，无需 40 GB 权重与 24 GB 显存。
 - **画风是资产，不是设定项**：画风档案（Style Lock + 负面栈 + 锚定参考图 + 可选 LoRA）独立建档、可导入导出风格包、可绑定你自己训练的 LoRA；换栏目 = 换画风档案，管线不变。
 - **零门槛试跑**：mock 引擎无 GPU、无模型、无云 Key（仅需本地 ffmpeg）即可端到端演练「导入 → 出图 → 出片 → 导出」，先跑通流程再逐步接真引擎。
@@ -52,7 +52,17 @@
 
 ## 安装 & 快速上手
 
-### a) 工作台本体（第一步：mock 零依赖跑通全链路）
+### a) 工作台本体（默认全云端）
+
+面向普通用户的 Windows 便携包由以下命令构建：
+
+```powershell
+.\scripts\package-windows.ps1
+```
+
+产物位于 `dist/windows/`。解压后双击 `Gitruck AI Drama Desk.exe` 即可；主包内有工作台运行时与 FFmpeg，但明确不包含 Python、PyTorch、CUDA、ComfyUI 和任何模型权重。当前实测云端主包压缩后约 **134.9 MB**、解压后约 **335 MB**，其中大头是 Bun 与 FFmpeg。
+
+源码开发方式如下：
 
 需要 [Bun](https://bun.sh) ≥ 1.x；mock 演练与导出实测需本地可用的 `ffmpeg`（在 PATH 中）。
 
@@ -61,9 +71,10 @@ git clone https://github.com/Gitruck/ai-drama-desk.git
 cd ai-drama-desk
 bun install
 bun run start        # 构建前端 + 起服务，打开 http://127.0.0.1:7799
+# 或者沿用 npm：npm run build && npm run dev
 ```
 
-**新手第一步不需要 GPU、模型或任何云 Key**：新建项目 → 粘贴一份分镜稿 md（最小结构见下文「输入契约」）→ 出图/出片引擎都选 **mock** → 全自动补齐 → 导出。跑通这一圈，你就理解了整个工作台；之后再按需接 ComfyUI（本地出片）或云端出口。
+首次启动默认选择 `pixmind-image` + `pixmind-video`；在设置里填入 `pixmindKey` 后即可全云使用。如果暂时没有云 Key，也可选择 mock 做零费用流程演练。
 
 CLI 与服务同源（源码形态运行）：
 
@@ -72,7 +83,68 @@ bun run cli -- --help
 bun run cli -- health --json
 ```
 
-### b) ComfyUI 本地部署（本地出图/出片）
+#### 开发与打包运维
+
+桌面便携包的启动器会常驻并持有 7799 端口。准备执行 `npm run dev` 前，先在仓库目录安全关闭它：
+
+```powershell
+npm run desk:stop
+```
+
+该命令会调用工作台自己的退出接口；有排队中或运行中的生成任务时会拒绝退出。确认可以中断任务、或面对不支持安全退出的早期版本时，才使用：
+
+```powershell
+npm run desk:stop:force
+```
+
+只想查看是谁占着端口，不结束任何进程：
+
+```powershell
+Get-NetTCPConnection -LocalPort 7799 -State Listen |
+  Select-Object LocalAddress, LocalPort, OwningProcess
+Get-CimInstance Win32_Process -Filter "ProcessId=<上一步的 OwningProcess>" |
+  Select-Object ProcessId, ExecutablePath, CommandLine
+```
+
+提交前的维护者检查与云端主包构建：
+
+```powershell
+bun run typecheck
+bun test
+bun run build
+
+# 默认输出到 dist/windows；可指定发布目录和版本号
+.\scripts\package-windows.ps1 `
+  -OutputDir .\dist\windows-final `
+  -Version 0.2.0-beta.1
+```
+
+打包机需要 Bun、FFmpeg/FFprobe、7-Zip 和 Windows 自带的 .NET Framework C# 编译器。脚本会构建前后端、编译桌面启动器、生成带唯一 `buildId` 的 `release.json`、压缩 ZIP，并输出体积与 SHA-256。启动器借 `buildId` 判断 7799 上是否为同一构建，避免新版 EXE 误开旧页面。
+
+### b) 本地推理组件（首次启用时安装）
+
+普通用户不需要执行 Python 命令：进入“设置与诊断” → “本地推理组件” → “下载本地推理组件”。安装器会读取 GitHub Release 上的版本清单、续传 ZIP、校验 SHA-256，在临时目录解压并精简，完整成功后才切换为当前版本。用户模型默认单独存放在 `%LOCALAPPDATA%\Gitruck\AI Drama Desk\local-engine\models`；也可以在同一卡片中改成其他本机绝对路径（例如 `F:\AI-Models\ComfyUI`）。修改位置不会自动搬动旧模型，更新或重装引擎也不会覆盖模型。
+
+如果你已经自行启动了 ComfyUI，不必再下载托管组件：在“设置与诊断”下方点击“检测现有 ComfyUI”，确认 `http://127.0.0.1:8188` 就绪后点击“使用此 ComfyUI”。上方的“刷新托管组件”只检查工作台自己安装的组件，不负责探测外部 ComfyUI。此时“托管组件的模型目录”也不会改动外部 ComfyUI；外部模型仍由它自己的 `models/` 或 `extra_model_paths.yaml` 管理。若要让托管组件复用现有安装的模型，应填写模型文件夹本身，例如 `F:\file\wip\ComfyUI\models`，而不是 ComfyUI 根目录。
+
+本地组件删除以下与工作台后端无关或重复的内容：
+
+- ComfyUI 官方 workflow 示例与媒体包；
+- ComfyUI 嵌入式文档、源码文档、测试和脚本示例；
+- SageAttention 与 Triton 两套重复加速后端；
+- 保留 ComfyUI 前端（便于排错）与 Comfy Kitchen，启动固定使用 `--use-ck-attention`。
+
+发布本地组件时，维护者从官方 Windows Portable 构建精简 ZIP：
+
+```powershell
+.\scripts\build-local-engine.ps1 `
+  -PortableArchive D:\downloads\ComfyUI_windows_portable_nvidia.7z `
+  -OutputDir .\dist\local-engine
+```
+
+将生成的 `local-engine-windows-nvidia.json` 与版本化 ZIP 一起上传到 Release；主程序默认从 `releases/latest/download/local-engine-windows-nvidia.json` 读取。也可用环境变量 `GITRUCK_LOCAL_ENGINE_MANIFEST_URL` 指向自有 CDN。精简组件尚未发布时，安装器会退回 ComfyUI 官方 v0.32.0 NVIDIA Portable（固定 URL、大小和 SHA-256），下载完成后在本机执行同样的裁剪；因此功能可用，但首次下载量会比自建精简 ZIP 大。
+
+下面的源码部署方式仅供开发者与需要完全自定义 ComfyUI 的用户使用。
 
 本地引擎经 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 的 HTTP API 驱动（默认 `http://127.0.0.1:8188`）。从官方仓库或官方 Desktop/便携包获取并安装；源码方式概略：
 
@@ -167,7 +239,7 @@ mypaths:
 
 工作台「设置」页的 ComfyUI 诊断会分层报告缺什么（插件节点 / 模型文件），按提示补齐即可。ComfyUI 未装或未启动时状态栏显示离线，不影响 mock / 云端出口。
 
-> **许可边界**：ComfyUI 为 GPL-3.0 项目。本仓不包含、不派生其任何代码，仅通过 HTTP API 与本机运行的 ComfyUI 实例通信；随附的 `scripts/start-comfyui.py` 仅以子进程方式启动你自行安装的 ComfyUI 并读取其标准输出，同样不包含、不派生其代码。
+> **许可边界**：ComfyUI 为 GPL-3.0 项目。云端主包不包含 ComfyUI；可选本地引擎是独立下载、独立目录、独立进程的组件，保留其许可文件与对应源码获取方式，工作台仅通过 HTTP API 与它通信。模型权重不随任何组件分发。
 
 ### c) 模型下载清单（自行从原始发布方获取）
 
@@ -376,5 +448,5 @@ bun run cli -- skills install --copy               # 不用链接，各宿主复
 
 - **测试与开发规格为内部持有**：本仓公开源码与使用文档；测试套件与开发过程规格不随仓发布。
 - **模型权重**：本仓不分发任何模型权重；请自行从原始发布方下载并核对各自许可（社区蒸馏 / 加速版尤其）。HunyuanVideo 1.5 权重受腾讯社区许可地域约束（如欧盟 / 英国 / 韩国排除），使用前自行确认。
-- **ComfyUI**：GPL-3.0 项目，本仓仅经 HTTP API 集成，无代码派生。
+- **ComfyUI**：GPL-3.0 项目；云端主包不含 ComfyUI，可选本地引擎作为独立组件分发并保留其许可与源码获取方式，工作台只经 HTTP API 集成。
 - **许可**：本仓源码以 MIT 许可发布（见 [LICENSE](LICENSE)）。

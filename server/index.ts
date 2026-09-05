@@ -60,6 +60,7 @@ import {
   validateLoraTraining,
 } from "./lib/lora/manager.ts";
 import { loraJobLog } from "./lib/lora/jobs.ts";
+import { localEngineStatus, resolveLocalModelsDir, triggerLocalEngine, type LocalEngineAction } from "./lib/local-engine.ts";
 
 ensureDirs();
 const cfg = loadConfig();
@@ -203,21 +204,49 @@ export function createRequestHandler() {
 
     try {
       // ---------- API ----------
+      if (path === "/api/app/identity" && req.method === "GET") {
+        return new Response(process.env.GITRUCK_DESK_BUILD_ID?.trim() || "development", {
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+        });
+      }
+
+      if (path === "/api/app/shutdown" && req.method === "POST") {
+        if (req.headers.get("x-gitruck-launcher") !== "1") return err("仅允许桌面启动器关闭后台。", 403, "FORBIDDEN");
+        const active = listJobs().filter((job) => job.status === "queued" || job.status === "running");
+        if (active.length > 0) return err("仍有生成任务正在执行，无法自动切换版本。", 409, "JOBS_ACTIVE", { activeJobs: active.length });
+        setTimeout(() => process.exit(0), 200);
+        return json({ ok: true });
+      }
+
       if (path === "/api/health") {
         const c = loadConfig();
-        const diagnostic = await diagnoseComfy(c);
-        const comfy = diagnostic.service.state === "ready";
+        // 云端优先：用户没有明确开启本地推理时，不探测 8188，也不触碰 ComfyUI。
+        const diagnostic = c.localInferenceEnabled ? await diagnoseComfy(c) : null;
+        const comfy = diagnostic?.service.state === "ready";
+        const localProviders = diagnostic ? {
+          "comfyui-image": diagnostic.providers["comfyui-image"].ready,
+          "comfyui-image2": diagnostic.providers["comfyui-image2"].ready,
+          "comfyui-video": diagnostic.providers["comfyui-video"].ready,
+          "hunyuan-video": diagnostic.providers["hunyuan-video"].ready,
+          "h3-video": diagnostic.providers["h3-video"].ready,
+          "h3-video-final": diagnostic.providers["h3-video-final"].ready,
+        } : {
+          "comfyui-image": false,
+          "comfyui-image2": false,
+          "comfyui-video": false,
+          "hunyuan-video": false,
+          "h3-video": false,
+          "h3-video-final": false,
+        };
         // 各出图/出片档位是否就绪，前端据此禁用没配好的选项
         return json({
           ok: true,
+          buildId: process.env.GITRUCK_DESK_BUILD_ID?.trim() || "development",
           comfy,
+          localInferenceEnabled: c.localInferenceEnabled,
+          localEngine: localEngineStatus(c.localModelsDir),
           providers: {
-            "comfyui-image": diagnostic.providers["comfyui-image"].ready,
-            "comfyui-image2": diagnostic.providers["comfyui-image2"].ready,
-            "comfyui-video": diagnostic.providers["comfyui-video"].ready,
-            "hunyuan-video": diagnostic.providers["hunyuan-video"].ready,
-            "h3-video": diagnostic.providers["h3-video"].ready,
-            "h3-video-final": diagnostic.providers["h3-video-final"].ready,
+            ...localProviders,
             "seedream-image": !!c.arkApiKey,
             "fal-video": !!c.falKey,
             "pixmind-image": !!c.pixmindKey,
@@ -231,6 +260,35 @@ export function createRequestHandler() {
       }
 
       if (path === "/api/diagnostics/comfyui" && req.method === "GET") return json(await diagnoseComfy(loadConfig()));
+
+      if (path === "/api/local-engine" && req.method === "GET") {
+        const current = loadConfig();
+        return json(localEngineStatus(current.localModelsDir));
+      }
+      if (path === "/api/local-engine/models-directory" && req.method === "PUT") {
+        const current = loadConfig();
+        const engine = localEngineStatus(current.localModelsDir);
+        if (engine.running) return err("请先停止本地推理，再修改模型目录。", 409);
+        const body = (await req.json().catch(() => ({}))) as { path?: unknown };
+        if (typeof body.path !== "string") return err("path 必须是字符串。", 400);
+        const modelsDir = resolveLocalModelsDir(body.path);
+        saveConfig({ ...current, localModelsDir: body.path.trim() });
+        return json({ ...localEngineStatus(body.path), modelsDir, previousModelsDir: engine.modelsDir });
+      }
+      if (path === "/api/local-engine/install" && req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { confirmed?: boolean };
+        if (body.confirmed !== true) return err("安装本地引擎需要 confirmed=true", 400);
+        const current = loadConfig();
+        return json(triggerLocalEngine("install", current.localModelsDir), 202);
+      }
+      const localEngineRoute = path.match(/^\/api\/local-engine\/(start|stop)$/);
+      if (localEngineRoute && req.method === "POST") {
+        const action = localEngineRoute[1] as LocalEngineAction;
+        const current = loadConfig();
+        const next = triggerLocalEngine(action, current.localModelsDir);
+        saveConfig({ ...current, localInferenceEnabled: action === "start" ? true : action === "stop" ? false : current.localInferenceEnabled });
+        return json(next, 202);
+      }
 
       if (path === "/api/config") {
         if (req.method === "GET") return json(publicConfig());
@@ -449,7 +507,7 @@ export function createRequestHandler() {
       if (m && req.method === "POST") {
         const body = (await req.json().catch(() => ({}))) as { provider?: string };
         const kind = m[3] as "keyframe" | "video";
-        const provider = body.provider ?? (kind === "keyframe" ? "comfyui-image" : "comfyui-video");
+        const provider = body.provider ?? (kind === "keyframe" ? "pixmind-image" : "pixmind-video");
         const job = enqueue(m[1], parseInt(m[2], 10), kind, provider);
         return json(job);
       }
@@ -461,7 +519,7 @@ export function createRequestHandler() {
         const body = (await req.json().catch(() => ({}))) as { mode?: string; provider?: string; count?: number; desc?: string };
         const mode = body.mode === "turnaround" ? "turnaround" : body.mode === "single" ? "single" : null;
         if (!mode) return err("mode 必须是 single 或 turnaround");
-        const provider = body.provider ?? "comfyui-image";
+        const provider = body.provider ?? "pixmind-image";
         const count = Math.max(1, Math.min(4, Number.isFinite(body.count) ? Math.floor(body.count as number) : 1));
         const enqueued = Array.from({ length: count }, () => enqueueCharRef(m![1], name, mode, provider, body.desc));
         return json({ enqueued: enqueued.length, jobs: enqueued });
@@ -493,7 +551,7 @@ export function createRequestHandler() {
       m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/auto$/);
       if (m && req.method === "POST") {
         const body = (await req.json().catch(() => ({}))) as { keyframeProvider?: string; videoProvider?: string };
-        const jobsOut = enqueueAuto(m[1], body.keyframeProvider ?? "comfyui-image", body.videoProvider ?? "comfyui-video");
+        const jobsOut = enqueueAuto(m[1], body.keyframeProvider ?? "pixmind-image", body.videoProvider ?? "pixmind-video");
         return json({ enqueued: jobsOut.length, jobs: jobsOut });
       }
 

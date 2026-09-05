@@ -229,6 +229,10 @@ export interface ProviderRefPolicy {
 export interface StudioConfig {
   port: number;
   comfyUrl: string;
+  /** 用户是否明确启用了本地推理。关闭时健康检查完全不访问 ComfyUI。 */
+  localInferenceEnabled: boolean;
+  /** 可选的本地模型绝对目录；留空时使用工作台独立本地引擎目录。 */
+  localModelsDir: string;
   /** 图像/视频两类 workflow 模板配置 */
   comfyImage?: ComfyWorkflowConfig;
   /** 第二图像模板槽（如 风格 LoRA 版），UI 里显示为「本地 ComfyUI · B」做 A/B 对比 */
@@ -312,6 +316,8 @@ export interface StudioConfig {
 export const DEFAULT_CONFIG: StudioConfig = {
   port: 7799,
   comfyUrl: "http://127.0.0.1:8188",
+  localInferenceEnabled: false,
+  localModelsDir: "",
   comfyImage: {
     template: "qwen-edit-keyframe.json",
     nodeMap: {

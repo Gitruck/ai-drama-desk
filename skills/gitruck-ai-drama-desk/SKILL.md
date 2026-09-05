@@ -56,7 +56,7 @@ description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把
 
 | 用户说 | 你做 |
 |---|---|
-| `/gitruck-ai-drama-desk charref`（或点名「用本地模型/工作台出三视图」） | `POST /projects/<id>/characters/<名>/generate-ref`，缺省 provider `comfyui-image`；轮询 `/jobs`。CLI 可直接调用时可用 `bun run cli -- charref ... --json`。**未点名路线时先按上节问一句** |
+| `/gitruck-ai-drama-desk charref`（或点名「用本地模型/工作台出三视图」） | `POST /projects/<id>/characters/<名>/generate-ref`，缺省 provider `pixmind-image`；轮询 `/jobs`。本地生成须显式传 `comfyui-image` / `comfyui-image2`，且先启用本地引擎。CLI 可直接调用时可用 `bun run cli -- charref ... --json`。**未点名路线时先按上节问一句** |
 | `refs upload`（或宿主生图后「把图传进工作台」） | multipart `POST /projects/<id>/characters/<名>/refs`（png/jpg/webp ≤20MB，服务端魔数校验）；CLI 可用时可用 `bun run cli -- refs upload ... --json` |
 | `/gitruck-ai-drama-desk style`（或「管画风/导风格包」） | 优先用 `/styles` 版本化 API；CLI 可直接调用时可用 `bun run cli -- style list \| create ...`，机器调用带 `--json` |
 | `/gitruck-ai-drama-desk lora`（或「训个画风 LoRA」） | 优先用 `/lora/validate` 与 `/lora/jobs` API；CLI 可直接调用时可用 `bun run cli -- lora ... --json`；提交前检查缺项逐条报给用户 |

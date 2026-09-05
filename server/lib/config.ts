@@ -3,7 +3,13 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_CONFIG, type StudioConfig } from "./types.ts";
 
-export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+/**
+ * 程序资源根目录。源码运行时由模块位置推导；便携包由启动器显式指到 `app/`。
+ * 用户数据不放这里，仍由 GITRUCK_DESK_DATA_DIR 独立控制。
+ */
+export const ROOT = process.env.GITRUCK_DESK_ROOT
+  ? resolve(process.env.GITRUCK_DESK_ROOT)
+  : join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 /**
  * 数据根目录。默认 `<仓库>/data`，可用 `GITRUCK_DESK_DATA_DIR` 覆盖。
  *

@@ -84,7 +84,7 @@ export function App() {
         </nav>
         <div className="side-foot">
           <span className={`status-dot ${health.comfy ? "ready" : "offline"}`} />
-          <span>ComfyUI {health.comfy ? "在线" : "离线"}</span>
+          <span>{health.comfy ? "本地引擎运行中" : health.localEngine?.installed ? "本地引擎已停止" : "云端模式"}</span>
         </div>
       </aside>
       <main className="main">
@@ -112,7 +112,7 @@ export function App() {
         )}
         {view.kind === "styles" && <StylesPage styles={styles} onChanged={refresh} />}
         {view.kind === "lora" && <LoraPage styles={styles} onStylesChanged={refresh} />}
-        {view.kind === "settings" && <SettingsPage />}
+        {view.kind === "settings" && <SettingsPage onChanged={refresh} />}
       </main>
     </div>
   );
@@ -387,8 +387,8 @@ function ProjectBoard({
 }) {
   const [p, setP] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
-  const [kfProvider, setKfProvider] = useState("comfyui-image");
-  const [vidProvider, setVidProvider] = useState("comfyui-video");
+  const [kfProvider, setKfProvider] = useState("pixmind-image");
+  const [vidProvider, setVidProvider] = useState("pixmind-video");
   const [manifest, setManifest] = useState<any>(null);
   const [reparsed, setReparsed] = useState<any>(null);
   const [deletion, setDeletion] = useState<any>(null);
@@ -1252,35 +1252,164 @@ function LoraJobDetail({ job, log, styles, publishStyle, setPublishStyle, onChan
   </div>;
 }
 
-function SettingsPage() {
+function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
   const [text, setText] = useState("");
+  const [config, setConfig] = useState<any>(null);
   const [msg, setMsg] = useState("");
   const [diagnostic, setDiagnostic] = useState<any>(null);
   const [diagnosticError, setDiagnosticError] = useState("");
+  const [diagnosticBusy, setDiagnosticBusy] = useState(false);
+  const [engine, setEngine] = useState<any>(null);
+  const [engineError, setEngineError] = useState("");
+  const [engineBusy, setEngineBusy] = useState(false);
   const inspect = useCallback(async () => {
+    setDiagnosticBusy(true);
     try {
       setDiagnostic(await api.comfyDiagnostic());
       setDiagnosticError("");
     } catch (error) {
       setDiagnosticError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDiagnosticBusy(false);
+    }
+  }, []);
+  const refreshEngine = useCallback(async () => {
+    try {
+      setEngine(await api.localEngine());
+      setEngineError("");
+    } catch (error) {
+      setEngineError(error instanceof Error ? error.message : String(error));
     }
   }, []);
   useEffect(() => {
-    api.config().then((c) => setText(JSON.stringify(c, null, 2)));
-    inspect();
-  }, [inspect]);
+    api.config().then((c) => {
+      setConfig(c);
+      setText(JSON.stringify(c, null, 2));
+    });
+    refreshEngine();
+  }, [refreshEngine]);
+  useEffect(() => {
+    const active = ["queued", "downloading", "verifying", "extracting", "pruning", "starting", "stopping"].includes(engine?.phase);
+    if (!active) return;
+    const timer = setInterval(refreshEngine, 1500);
+    return () => clearInterval(timer);
+  }, [engine?.phase, refreshEngine]);
+
+  const engineAction = async (action: "install" | "start" | "stop") => {
+    if (action === "install" && !window.confirm("现在下载本地推理组件？主程序仍可继续使用云端模型；模型权重不会自动下载。")) return;
+    setEngineBusy(true);
+    setEngineError("");
+    try {
+      const result = action === "install" ? await api.installLocalEngine() : action === "start" ? await api.startLocalEngine() : await api.stopLocalEngine();
+      setEngine(result);
+      await onChanged();
+    } catch (error) {
+      setEngineError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEngineBusy(false);
+    }
+  };
+  const useExistingComfy = async (enabled: boolean) => {
+    setDiagnosticBusy(true);
+    setDiagnosticError("");
+    try {
+      if (enabled) {
+        const result = diagnostic ?? await api.comfyDiagnostic();
+        setDiagnostic(result);
+        if (result?.service?.state !== "ready") throw new Error(`无法连接 ${config?.comfyUrl ?? "配置中的 ComfyUI 地址"}，请先启动 ComfyUI。`);
+      }
+      const next = await api.saveConfig({ localInferenceEnabled: enabled });
+      setConfig(next);
+      setText(JSON.stringify(next, null, 2));
+      setMsg(enabled ? "已启用现有 ComfyUI；本地出图与出片出口现可使用。" : "已停用本地推理；外部 ComfyUI 进程不会被关闭。");
+      await onChanged();
+    } catch (error) {
+      setDiagnosticError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDiagnosticBusy(false);
+    }
+  };
   return (
     <div className="panel settings-page">
-      <PageHeader eyebrow="系统" title="设置与诊断" description="检查 ComfyUI 运行环境与工作流依赖，并管理工作台本地配置。" actions={<button onClick={inspect}>重新诊断</button>} />
+      <PageHeader eyebrow="系统" title="设置与诊断" description="默认只使用云端模型；需要本地推理时，可安装托管组件，也可连接你已经启动的 ComfyUI。" />
+      <LocalEnginePanel engine={engine} busy={engineBusy} error={engineError} onAction={engineAction} onRefresh={refreshEngine} />
       {diagnosticError && <div className="warn bad">{diagnosticError}</div>}
-      <section className="page-section"><div className="section-heading"><div><h2>ComfyUI 运行诊断</h2><p>只读 system_stats、object_info 和 queue；不会提交 prompt、加载模型或调用付费服务。</p></div><span className="section-count">5 层检查</span></div>{diagnostic && <ComfyDiagnosticPanel diagnostic={diagnostic} />}</section>
+      <section className="page-section">
+        <div className="section-heading">
+          <div><h2>现有 ComfyUI 与运行诊断</h2><p>连接地址：{config?.comfyUrl ?? "读取中…"}。仅在你主动点击时读取 system_stats、object_info 和 queue；不会提交 prompt、加载模型或调用付费服务。</p></div>
+          <div className="form-actions">
+            <button onClick={inspect} disabled={diagnosticBusy}>{diagnosticBusy ? "检测中…" : "检测现有 ComfyUI"}</button>
+            {diagnostic?.service?.state === "ready" && !config?.localInferenceEnabled && <button className="primary" onClick={() => useExistingComfy(true)} disabled={diagnosticBusy}>使用此 ComfyUI</button>}
+            {config?.localInferenceEnabled && !engine?.running && <button onClick={() => useExistingComfy(false)} disabled={diagnosticBusy}>停用本地推理</button>}
+          </div>
+        </div>
+        {!diagnostic && <div className="empty-state compact">这里也支持自行启动的 ComfyUI；不要求先安装上方的托管组件。点击“检测现有 ComfyUI”后再决定是否启用。</div>}
+        {diagnostic && <ComfyDiagnosticPanel diagnostic={diagnostic} />}
+      </section>
       <section className="surface-card config-card">
         <div className="section-heading"><div><h2>工作台配置</h2><p>管理服务地址、workflow 模板、节点映射、云端密钥状态、分辨率和成本单价。</p></div><span className="step-badge muted">JSON</span></div>
         <textarea className="md-input mono config-editor" value={text} onChange={(e) => setText(e.target.value)} />
-        <div className="form-actions"><button className="primary" onClick={async () => { try { await api.saveConfig(JSON.parse(text)); setMsg("已保存"); } catch (e) { setMsg(`保存失败：${e instanceof Error ? e.message : e}`); } }}>保存配置</button><span className="dim">{msg || "修改后保存，新的生成任务将使用最新配置。"}</span></div>
+        <div className="form-actions"><button className="primary" onClick={async () => { try { const next = await api.saveConfig(JSON.parse(text)); setConfig(next); setText(JSON.stringify(next, null, 2)); setMsg("已保存"); await onChanged(); } catch (e) { setMsg(`保存失败：${e instanceof Error ? e.message : e}`); } }}>保存配置</button><span className="dim">{msg || "修改后保存，新的生成任务将使用最新配置。"}</span></div>
       </section>
     </div>
   );
+}
+
+function LocalEnginePanel({ engine, busy, error, onAction, onRefresh }: { engine: any; busy: boolean; error: string; onAction: (action: "install" | "start" | "stop") => Promise<void>; onRefresh: () => Promise<void> }) {
+  const [modelsDir, setModelsDir] = useState("");
+  const [modelsDirMessage, setModelsDirMessage] = useState("");
+  const [refreshMessage, setRefreshMessage] = useState("");
+  const active = ["queued", "downloading", "verifying", "extracting", "pruning", "starting", "stopping"].includes(engine?.phase);
+  const phaseLabel: Record<string, string> = {
+    "not-installed": "未安装", queued: "准备下载", downloading: "下载中", verifying: "校验中", extracting: "解压中", pruning: "精简中",
+    installed: "已安装", starting: "启动中", running: "运行中", stopping: "停止中", failed: "需要处理",
+  };
+  useEffect(() => {
+    if (engine?.modelsDir) setModelsDir(engine.modelsDir);
+  }, [engine?.modelsDir]);
+  const saveModelsDir = async (path: string) => {
+    setModelsDirMessage("");
+    try {
+      const next = await api.setLocalModelsDir(path);
+      setModelsDir(next.modelsDir);
+      setModelsDirMessage(next.modelsDir === next.previousModelsDir ? "模型目录未变化。" : "模型目录已更新；旧目录中的模型不会自动搬迁。");
+      await onRefresh();
+    } catch (e) {
+      setModelsDirMessage(`修改失败：${e instanceof Error ? e.message : e}`);
+    }
+  };
+  return <section className="surface-card local-engine-card">
+    <div className="section-heading">
+      <div><h2>本地推理组件</h2><p>Python、PyTorch、CUDA 与 ComfyUI 不在主安装包内；首次启用时才下载。模型权重始终由你按需添加。</p></div>
+      <span className={`status-badge ${engine?.running ? "status-succeeded" : engine?.phase === "failed" ? "status-failed" : ""}`}>{phaseLabel[engine?.phase] ?? "读取中"}</span>
+    </div>
+    <div className="local-engine-facts">
+      <span><b>主包模式</b> 全云端</span>
+      <span><b>本地引擎</b> {engine?.version ?? "按需安装"}</span>
+      <span><b>模型</b> 不随组件下载</span>
+      <span><b>精简项</b> 示例媒体 / 嵌入文档 / Sage / Triton</span>
+    </div>
+    {active && <div className="install-progress"><span style={{ width: `${Math.max(3, engine?.progress ?? 8)}%` }} /></div>}
+    <p className="dim">{engine?.message ?? "正在读取本地引擎状态…"}</p>
+    {engine?.modelsDir && <div className="model-directory-editor">
+      <label htmlFor="local-models-dir"><b>托管组件的模型目录</b><span>只供工作台按需安装的组件使用；连接现有 ComfyUI 时，由对方自己的 models / extra_model_paths.yaml 管理模型。</span></label>
+      <div className="model-directory-row">
+        <input id="local-models-dir" value={modelsDir} onChange={(event) => setModelsDir(event.target.value)} disabled={busy || active || engine?.running} spellCheck={false} />
+        <button disabled={busy || active || engine?.running || !modelsDir.trim()} onClick={() => saveModelsDir(modelsDir)}>保存位置</button>
+        <button disabled={busy || active || engine?.running} onClick={() => saveModelsDir("")}>恢复默认</button>
+      </div>
+      {modelsDirMessage && <span className="dim small">{modelsDirMessage}</span>}
+    </div>}
+    {error && <div className="warn bad">{error}</div>}
+    <div className="form-actions">
+      {!engine?.installed && <button className="primary" disabled={busy || active || engine?.supported === false} onClick={() => onAction("install")}>{active ? "安装进行中…" : "下载本地推理组件"}</button>}
+      {engine?.installed && !engine?.running && <button className="primary" disabled={busy || active} onClick={() => onAction("start")}>启动本地推理</button>}
+      {engine?.running && <button disabled={busy || active} onClick={() => onAction("stop")}>停止本地推理</button>}
+      <button disabled={busy} onClick={async () => { await onRefresh(); setRefreshMessage(`托管组件状态已刷新 · ${new Date().toLocaleTimeString()}`); }}>刷新托管组件</button>
+      <span className="dim small">云端出图和出片不需要安装此组件。</span>
+    </div>
+    {refreshMessage && <p className="dim small">{refreshMessage}；自行启动的 ComfyUI 请在下方检测。</p>}
+  </section>;
 }
 
 function ComfyDiagnosticPanel({ diagnostic }: { diagnostic: any }) {

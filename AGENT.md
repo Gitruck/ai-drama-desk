@@ -87,7 +87,7 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 
 | 命令 | 关键参数 | 说明 |
 |---|---|---|
-| `charref <project> <角色名>` | `--mode single\|turnaround`；`--provider`（缺省 comfyui-image）；`--count N`；`--desc` | 生成人设锚点：single 单人立绘（完成自动设主参考）/ turnaround 三视图设定表；产物落角色源图库即刻可挑可裁；A 档零前置兜底。**注意**：这是「工作台管线」路线；用户想用 agent 宿主自带生图能力时不走本命令，宿主出图后用 `refs upload` 落库；用户未点名路线时先问 |
+| `charref <project> <角色名>` | `--mode single\|turnaround`；`--provider`（缺省 pixmind-image）；`--count N`；`--desc` | 生成人设锚点：single 单人立绘（完成自动设主参考）/ turnaround 三视图设定表；产物落角色源图库即刻可挑可裁。云端默认需先配置 pixmindKey；本地 A/B 档须由用户明确启用。**注意**：这是「工作台管线」路线；用户想用 agent 宿主自带生图能力时不走本命令，宿主出图后用 `refs upload` 落库；用户未点名路线时先问 |
 | `refs upload <project> <角色名> <文件...>` | — | 把本地图片（宿主/外部生图产物）经服务端校验上传进该角色源图库，即刻进双参考集 |
 | `style list` | — | 列画风档案（带 LoRA 标记） |
 | `style create` | `--file profile.json` | 自建画风（id 小写字母数字连字符） |
@@ -114,8 +114,8 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 | `GET /projects`、`GET /projects/<id>` | 项目列表/详情 |
 | `POST /projects/<id>/characters/<名>/refs` | 上传角色源图（png/jpg/webp，≤20MB，按魔数校验） |
 | `POST /projects/<id>/characters/<名>/generate-ref` | 生成人设锚点：body `{mode:"single"\|"turnaround", provider?, count?, desc?}`；产物落源图库、即刻进双参考集 |
-| `POST /projects/<id>/shots/<n>/keyframe` | 单镜出图：body `{provider?}`，默认 `comfyui-image` |
-| `POST /projects/<id>/shots/<n>/video` | 单镜出片：body `{provider?}`，默认 `comfyui-video` |
+| `POST /projects/<id>/shots/<n>/keyframe` | 单镜出图：body `{provider?}`，默认 `pixmind-image` |
+| `POST /projects/<id>/shots/<n>/video` | 单镜出片：body `{provider?}`，默认 `pixmind-video` |
 | `POST /projects/<id>/shots/<n>/choose` | 选用某张图/某条片：body `{kind, file}` |
 | `GET/DELETE /projects/<id>/shots/<n>/outputs/<kind>/<file>` | 删除前预览影响 / 永久删除（body 须 `confirmed:true`） |
 | `POST /projects/<id>/auto` | 全自动补齐：body `{keyframeProvider?, videoProvider?}` |
