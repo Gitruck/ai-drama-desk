@@ -46,8 +46,8 @@ export function App() {
     <div className="shell">
       <aside className="side">
         <button className="brand" onClick={() => setView({ kind: "home" })}>
-          <span className="brand-mark">G</span>
-          <span className="brand-copy"><b>AI 再现制片工作台</b><small>Gitruck Drama Desk</small></span>
+          <img className="brand-mark" src="/brand/ai-animation-desk-logo.svg" alt="" width="34" height="34" />
+          <span className="brand-copy"><b>AI 动画制片工作台</b><small>Gitruck Drama Desk</small></span>
         </button>
         <nav className="side-nav" aria-label="工作台导航">
           <div className="side-group side-project-group">
@@ -272,7 +272,7 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
           </div>
           <label className="storyboard-field">
             分镜稿 Markdown
-            <textarea className="md-input" value={md} onChange={(e) => edit(setMd)(e.target.value)} placeholder="# AI 再现分镜稿 · ……（beat B17）&#10;……" />
+            <textarea className="md-input" value={md} onChange={(e) => edit(setMd)(e.target.value)} placeholder="# AI 动画分镜稿 · ……（beat B17）&#10;……" />
           </label>
           <div className="form-actions">
             <button disabled={busy || !md.trim()} onClick={doPreview}>{busy ? "解析中…" : "解析预览"}</button>

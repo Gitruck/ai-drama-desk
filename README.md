@@ -1,10 +1,16 @@
-# ai-drama-desk · AI 再现制片工作台
+<p align="center">
+  <img src="brand/ai-animation-desk-logo.svg" width="112" alt="Gitruck AI 动画制片工作台 Logo">
+</p>
+
+# ai-drama-desk · AI 动画制片工作台
 
 > 把「分镜稿 md」低成本变成可回轨的视频片段 —— **默认全云端、需要时再安装本地引擎：keyframe（参考图/LoRA 锁角色与画风）→ I2V 抽卡 → 导出 return-v1 命名的片段包，可拖回任意 NLE**。
 >
 > 主安装包不含 Python、PyTorch、CUDA、ComfyUI 或模型权重；本地 GPU 是可选组件，首次点“下载本地推理组件”时才安装。数据即文件，删目录即删数据。
 
-**🔗 配套教程：[AI 视频制片全流程与 LoRA 实践](https://hocassian.feishu.cn/docx/BVond4JbnoWVLnxaWMSckBpnnig)**（完整制片流程 · Agent 中使用 skills · LoRA 实战复盘 · 与 gtrk 工作流衔接）
+**🔗 配套教程：[AI 动画制片工作台｜上手、云端与本地部署](https://hocassian.feishu.cn/wiki/FRAKwUvBWib2vrkqZ5XcLDRqnOe)**（完整制片流程 · Agent 中使用 skills · 本地模型与 LoRA 部署 · 与 gtrk 工作流衔接）
+
+**⬇️ Windows x64 下载：[gitruck-ai-drama-desk-windows-x64.zip](https://api.ai-mcn.tv:9000/broadcast/exe/gitruck-ai-drama-desk-windows-x64.zip)**（当前云端优先便携包；解压后即可启动，本地推理组件按需安装）
 
 ```
 分镜稿 md ──解析──▶ Shot IR ──每镜──▶ keyframe（参考图锁角色/画风）──▶ I2V 出片（540p 抽卡）
@@ -60,7 +66,7 @@
 .\scripts\package-windows.ps1
 ```
 
-产物位于 `dist/windows/`。解压后双击 `Gitruck AI Drama Desk.exe` 即可；主包内有工作台运行时与 FFmpeg，但明确不包含 Python、PyTorch、CUDA、ComfyUI 和任何模型权重。当前实测云端主包压缩后约 **134.9 MB**、解压后约 **335 MB**，其中大头是 Bun 与 FFmpeg。
+产物位于 `dist/windows/`。构建脚本会从 `brand/ai-animation-desk-logo.svg` 生成 Windows 启动器图标；解压后双击 `Gitruck AI Drama Desk.exe` 即可。主包内有工作台运行时与 FFmpeg，但明确不包含 Python、PyTorch、CUDA、ComfyUI 和任何模型权重。当前实测云端主包压缩后约 **134.9 MB**、解压后约 **335 MB**，其中大头是 Bun 与 FFmpeg。
 
 源码开发方式如下：
 

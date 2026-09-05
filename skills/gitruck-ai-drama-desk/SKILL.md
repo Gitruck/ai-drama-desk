@@ -1,9 +1,9 @@
 ---
 name: gitruck-ai-drama-desk
-description: AI 再现制片工作台（ai-drama-desk）的驱动 skill——把一份「分镜稿 md」投进本地工作台（http://127.0.0.1:7799），驱动「角色参考图（人设锚点）→ keyframe（参考图/LoRA 锁角色与画风）→ I2V 出片抽卡 → 导出 return-v1 命名回轨包」闭环，并管理画风资产、LoRA 训练与 ComfyUI 诊断。当用户想「把分镜稿投进工作台出片 / 用本地开源模型出 AI 再现 / 给角色出人设图或三视图 / 低成本出片 / 540p 抽卡 / 管理画风档案或风格包 / 训练画风 LoRA / 诊断 ComfyUI 就绪度」时使用本 skill。支持命令式参数：`/gitruck-ai-drama-desk charref` 出人设图、`/gitruck-ai-drama-desk style` 管画风、`/gitruck-ai-drama-desk lora` 管训练、`/gitruck-ai-drama-desk health` 查服务。产物是片段包（拖回任意 NLE），审美取舍（挑图/挑片）永远留给用户。
+description: AI 动画制片工作台（ai-drama-desk）的驱动 skill——把一份「分镜稿 md」投进本地工作台（http://127.0.0.1:7799），驱动「角色参考图（人设锚点）→ keyframe（参考图/LoRA 锁角色与画风）→ I2V 出片抽卡 → 导出 return-v1 命名回轨包」闭环，并管理画风资产、LoRA 训练与 ComfyUI 诊断。当用户想「把分镜稿投进工作台出片 / 用本地开源模型出 AI 动画 / 给角色出人设图或三视图 / 低成本出片 / 540p 抽卡 / 管理画风档案或风格包 / 训练画风 LoRA / 诊断 ComfyUI 就绪度」时使用本 skill。支持命令式参数：`/gitruck-ai-drama-desk charref` 出人设图、`/gitruck-ai-drama-desk style` 管画风、`/gitruck-ai-drama-desk lora` 管训练、`/gitruck-ai-drama-desk health` 查服务。产物是片段包（拖回任意 NLE），审美取舍（挑图/挑片）永远留给用户。
 ---
 
-# gitruck-ai-drama-desk · AI 再现制片工作台驱动
+# gitruck-ai-drama-desk · AI 动画制片工作台驱动
 
 ## 一句话定位
 

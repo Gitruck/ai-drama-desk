@@ -1,7 +1,7 @@
 {
   "name": "gitruck-ai-drama-desk",
   "version": "0.2.0-beta.1",
-  "description": "AI 再现（AI Drama）出片工作台：分镜稿导入 → 关键帧/视频生成（本地 ComfyUI 或云端出口）→ 画风资产与风格 LoRA 管理 → 片段导出",
+  "description": "AI 动画（AI Drama）出片工作台：分镜稿导入 → 关键帧/视频生成（本地 ComfyUI 或云端出口）→ 画风资产与风格 LoRA 管理 → 片段导出",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -172,7 +172,7 @@ function manifestMd(m: ExportManifest): string {
   const stripped = m.items.filter((i) => i.audioStripped);
   const fellBack = m.items.filter((i) => i.fallbackFrom);
   const lines = [
-    `# AI 再现导出清单 · beat ${m.beatId}`,
+    `# AI 动画导出清单 · beat ${m.beatId}`,
     "",
     `- 导出时间：${m.exportedAt}`,
     m.trackSt != null ? `- 回轨区间：${m.trackSt}s → ${m.trackEd}s（对齐时以此为准，超出裁齐）` : null,

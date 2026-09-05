@@ -43,7 +43,7 @@ internal static class Launcher
             var server = Path.Combine(app, "server.js");
             if (!File.Exists(runtime) || !File.Exists(server))
             {
-                MessageBox.Show("安装文件不完整，请重新安装 AI 再现制片工作台。", "Gitruck AI Drama Desk", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("安装文件不完整，请重新安装 AI 动画制片工作台。", "Gitruck AI Drama Desk", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 

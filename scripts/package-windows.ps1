@@ -44,8 +44,15 @@ try {
 
   $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
   if (!(Test-Path -LiteralPath $csc)) { throw '找不到 Windows .NET Framework C# 编译器。' }
-  & $csc /nologo /target:winexe /optimize+ /reference:System.Windows.Forms.dll "/out:$stage\Gitruck AI Drama Desk.exe" '.\packaging\Launcher.cs'
-  if ($LASTEXITCODE -ne 0) { throw '启动器构建失败。' }
+  $launcherIcon = Join-Path $env:TEMP "gitruck-ai-animation-desk-$([Guid]::NewGuid().ToString('N')).ico"
+  try {
+    & $BunPath '.\scripts\build-windows-icon.ts' '.\brand\ai-animation-desk-logo.svg' $launcherIcon
+    if ($LASTEXITCODE -ne 0) { throw '启动器图标生成失败。' }
+    & $csc /nologo /target:winexe /optimize+ /reference:System.Windows.Forms.dll "/win32icon:$launcherIcon" "/out:$stage\Gitruck AI Drama Desk.exe" '.\packaging\Launcher.cs'
+    if ($LASTEXITCODE -ne 0) { throw '启动器构建失败。' }
+  } finally {
+    if (Test-Path -LiteralPath $launcherIcon) { Remove-Item -LiteralPath $launcherIcon -Force }
+  }
 
   $buildId = "$Version-$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
   $release = [ordered]@{

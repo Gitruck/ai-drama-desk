@@ -1,6 +1,6 @@
 # ai-drama-desk · Agent Playbook
 
-给 **agent** 看的操作手册：把用户「把这份分镜稿做成 AI 再现片段」的自然语言需求，落成对工作台
+给 **agent** 看的操作手册：把用户「把这份分镜稿做成 AI 动画片段」的自然语言需求，落成对工作台
 HTTP API / CLI 的一串调用，再把回轨包位置 + manifest 结论回给用户。任何 agent（Claude / Codex /
 Cursor / …）读完这一份就能驱动整条闭环；`skills/gitruck-ai-drama-desk/` 里的 skill 只是这份
 playbook 的薄壳。
