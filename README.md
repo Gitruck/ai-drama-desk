@@ -68,6 +68,18 @@
 
 产物位于 `dist/windows/`。构建脚本会从 `brand/ai-animation-desk-logo.svg` 生成 Windows 启动器图标；解压后双击 `Gitruck AI Drama Desk.exe` 即可。主包内有工作台运行时与 FFmpeg，但明确不包含 Python、PyTorch、CUDA、ComfyUI 和任何模型权重。当前实测云端主包压缩后约 **134.9 MB**、解压后约 **335 MB**，其中大头是 Bun 与 FFmpeg。
 
+验收完成后，执行下面这条命令即可重新打包，并把校验通过的最新压缩包发布到官网稳定下载文件：
+
+```powershell
+bun run release:windows
+```
+
+默认发布到 `T:\web\broadcast\exe\gitruck-ai-drama-desk-windows-x64.zip`。发布时会先复制到同目录临时文件并核对 SHA-256，确认一致后才替换稳定下载包；普通的 `bun run package:windows` 或直接运行打包脚本不会覆盖它。若需改发布位置，可使用 `-PublishPath`：
+
+```powershell
+.\scripts\package-windows.ps1 -Publish -PublishPath 'D:\release\gitruck-ai-drama-desk-windows-x64.zip'
+```
+
 源码开发方式如下：
 
 需要 [Bun](https://bun.sh) ≥ 1.x；mock 演练与导出实测需本地可用的 `ffmpeg`（在 PATH 中）。
@@ -123,9 +135,12 @@ bun run build
 .\scripts\package-windows.ps1 `
   -OutputDir .\dist\windows-final `
   -Version 0.2.0-beta.1
+
+# 验收通过后：重新构建并发布到官网稳定下载文件
+bun run release:windows
 ```
 
-打包机需要 Bun、FFmpeg/FFprobe、7-Zip 和 Windows 自带的 .NET Framework C# 编译器。脚本会构建前后端、编译桌面启动器、生成带唯一 `buildId` 的 `release.json`、压缩 ZIP，并输出体积与 SHA-256。启动器借 `buildId` 判断 7799 上是否为同一构建，避免新版 EXE 误开旧页面。
+打包机需要 Bun、FFmpeg/FFprobe、7-Zip 和 Windows 自带的 .NET Framework C# 编译器。脚本会构建前后端、编译桌面启动器、生成带唯一 `buildId` 的 `release.json`、压缩 ZIP，并输出体积与 SHA-256。只有带 `-Publish` 的发布命令才会更新官网稳定下载文件，并在替换前后校验文件完整性。启动器借 `buildId` 判断 7799 上是否为同一构建，避免新版 EXE 误开旧页面。
 
 ### b) 本地推理组件（首次启用时安装）
 

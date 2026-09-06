@@ -234,6 +234,12 @@ function pendingJob(projectId: string, shotIndex: number, kind: JobKind): GenJob
 }
 
 export function enqueue(projectId: string, shotIndex: number, kind: JobKind, provider: string, chainVideoProvider?: string): GenJob {
+  const pending = pendingJob(projectId, shotIndex, kind);
+  if (pending) {
+    // 快速连点/传输重试只返回原任务，不再重复烧云端费用或显卡时间。
+    if (chainVideoProvider && !pending.chainVideoProvider) pending.chainVideoProvider = chainVideoProvider;
+    return pending;
+  }
   if (provider === "comfyui-image2") {
     const project = getProject(projectId);
     const style = project?.styleId ? getStyle(project.styleId) : null;

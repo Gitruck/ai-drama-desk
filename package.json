@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "bun run server/index.ts",
     "build": "vite build --config web/vite.config.ts",
+    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-windows.ps1",
+    "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-windows.ps1 -Publish",
     "start": "bun run build && bun run server/index.ts",
     "desk:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-desk.ps1",
     "desk:stop:force": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-desk.ps1 -Force",

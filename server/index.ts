@@ -34,7 +34,7 @@ import {
   styleUsage,
 } from "./lib/styles.ts";
 import { cancelJob, cancelProjectJobs, dismissJobs, enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
-import { exportProject } from "./lib/export.ts";
+import { exportProject, type ExportManifest } from "./lib/export.ts";
 import { diagnoseComfy } from "./lib/providers/comfyui.ts";
 import { deleteMediaOutput, MediaDeleteError, previewMediaDelete } from "./lib/media.ts";
 import {
@@ -64,6 +64,19 @@ import { localEngineStatus, resolveLocalModelsDir, triggerLocalEngine, type Loca
 
 ensureDirs();
 const cfg = loadConfig();
+const EXPORT_IDEMPOTENCY_TTL_MS = 5 * 60_000;
+const exportResults = new Map<string, { expiresAt: number; manifest: ExportManifest }>();
+
+function cachedExport(projectId: string, key: string): ExportManifest | null {
+  const now = Date.now();
+  for (const [entryKey, entry] of exportResults) if (entry.expiresAt <= now) exportResults.delete(entryKey);
+  const entry = exportResults.get(`${projectId}:${key}`);
+  return entry && entry.expiresAt > now ? entry.manifest : null;
+}
+
+function rememberExport(projectId: string, key: string, manifest: ExportManifest): void {
+  exportResults.set(`${projectId}:${key}`, { expiresAt: Date.now() + EXPORT_IDEMPOTENCY_TTL_MS, manifest });
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -559,7 +572,15 @@ export function createRequestHandler() {
       if (m && req.method === "POST") {
         const p = getProject(m[1]);
         if (!p) return err("项目不存在", 404);
-        return json(exportProject(p, { keepAudio: loadConfig().exportKeepAudio }));
+        const idempotencyKey = req.headers.get("Idempotency-Key")?.trim();
+        if (idempotencyKey && idempotencyKey.length > 128) return err("Idempotency-Key 过长");
+        if (idempotencyKey) {
+          const cached = cachedExport(p.id, idempotencyKey);
+          if (cached) return json(cached);
+        }
+        const manifest = exportProject(p, { keepAudio: loadConfig().exportKeepAudio });
+        if (idempotencyKey) rememberExport(p.id, idempotencyKey, manifest);
+        return json(manifest);
       }
 
       if (path === "/api/jobs") {

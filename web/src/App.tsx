@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EDITION_NOTICE, type LoraJob, type LoraTrainRequest } from "../../shared/contracts/index.ts";
 import { api, projFile, styleRef } from "./api.ts";
+import { AsyncButton } from "./components/AsyncButton.tsx";
 import { CharacterPanel, refPolicyFor, strategyBadgeText } from "./components/CharacterPanel.tsx";
 import { keyframeProviderState } from "./provider-state.ts";
 import { tierBadge } from "./provider-tier.ts";
@@ -171,8 +172,9 @@ async function writeClipboard(value: string) {
 }
 
 function ProjectIdCopy({ id }: { id: string }) {
-  const [status, setStatus] = useState<"idle" | "copied" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "copying" | "copied" | "error">("idle");
   const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const copyLock = useRef(false);
 
   useEffect(() => {
     setStatus("idle");
@@ -182,12 +184,17 @@ function ProjectIdCopy({ id }: { id: string }) {
   }, [id]);
 
   const copy = async () => {
+    if (copyLock.current) return;
+    copyLock.current = true;
     if (resetTimer.current) clearTimeout(resetTimer.current);
+    setStatus("copying");
     try {
       await writeClipboard(id);
       setStatus("copied");
     } catch {
       setStatus("error");
+    } finally {
+      copyLock.current = false;
     }
     resetTimer.current = setTimeout(() => setStatus("idle"), 1800);
   };
@@ -198,11 +205,13 @@ function ProjectIdCopy({ id }: { id: string }) {
       className={`project-id-copy ${status}`}
       title="复制项目 ID，供 Agent、CLI 或 HTTP API 定位当前项目"
       aria-label={`复制项目 ID ${id}`}
+      aria-busy={status === "copying" || undefined}
+      disabled={status === "copying"}
       onClick={copy}
     >
       <span>项目 ID</span>
       <code>{id}</code>
-      <b aria-live="polite">{status === "copied" ? "已复制" : status === "error" ? "重试" : "复制"}</b>
+      <b aria-live="polite">{status === "copying" ? "复制中…" : status === "copied" ? "已复制" : status === "error" ? "重试" : "复制"}</b>
     </button>
   );
 }
@@ -215,6 +224,7 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
   const [preview, setPreview] = useState<{ doc: any; warnings: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const busyRef = useRef(false);
 
   useEffect(() => {
     if (styles.length && !styleId) setStyleId(styles[0].id);
@@ -229,6 +239,8 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
   };
 
   const run = async (fn: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -236,6 +248,7 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -275,8 +288,8 @@ function ImportPanel({ styles, onCreated }: { styles: any[]; onCreated: (id: str
             <textarea className="md-input" value={md} onChange={(e) => edit(setMd)(e.target.value)} placeholder="# AI 动画分镜稿 · ……（beat B17）&#10;……" />
           </label>
           <div className="form-actions">
-            <button disabled={busy || !md.trim()} onClick={doPreview}>{busy ? "解析中…" : "解析预览"}</button>
-            <button className="primary" disabled={busy || !preview} onClick={doCreate} title={preview ? "" : "先解析预览，看清解析结果再建"}>建立项目 →</button>
+            <AsyncButton disabled={busy || !md.trim()} pendingText="解析中…" onClick={doPreview}>解析预览</AsyncButton>
+            <AsyncButton className="primary" disabled={busy || !preview} pendingText="建立中…" onClick={doCreate} title={preview ? "" : "先解析预览，看清解析结果再建"}>建立项目 →</AsyncButton>
             <span className="dim small">预览只解析、不落盘；建立项目也不会立即调用模型。</span>
           </div>
           {error && <div className="warn bad">{error}</div>}
@@ -393,6 +406,8 @@ function ProjectBoard({
   const [reparsed, setReparsed] = useState<any>(null);
   const [deletion, setDeletion] = useState<any>(null);
   const [actionError, setActionError] = useState("");
+  const [styleBusy, setStyleBusy] = useState(false);
+  const styleLock = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const ready = (pid: string) => providers[pid] !== false; // 未知(健康接口还没回)时不拦
@@ -463,6 +478,32 @@ function ProjectBoard({
     }
   }, [id, onDeleted]);
 
+  const exportBundle = useCallback(async () => {
+    setActionError("");
+    try {
+      setManifest(await api.exportProject(id));
+      await refresh();
+    } catch (e) {
+      setActionError(`导出失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [id, refresh]);
+
+  const updateStyle = useCallback(async (styleId: string) => {
+    if (styleLock.current) return;
+    styleLock.current = true;
+    setStyleBusy(true);
+    setActionError("");
+    try {
+      await api.updateProject(id, { styleId: styleId || null });
+      await refresh();
+    } catch (e) {
+      setActionError(`切换画风失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      styleLock.current = false;
+      setStyleBusy(false);
+    }
+  }, [id, refresh]);
+
   const active = useMemo(() => jobs.filter((j) => j.status === "queued" || j.status === "running"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "error"), [jobs]);
   // 参考预算裁减等非致命告警（如角色超预算被裁）：成功任务也要浮出来，不静默。
@@ -493,15 +534,16 @@ function ProjectBoard({
           <span className="meta-pill">累计成本 ¥{p.totalCost}</span>
         </>}
         actions={<>
-          <button
+          <AsyncButton
             onClick={reparse}
             disabled={active.length > 0}
+            pendingText="解析中…"
             title={active.length > 0 ? "有任务在途，跑完或中止后再重解析" : "按项目里保存的原始分镜稿重跑解析器，已出的图和片都保留"}
           >
             重新解析
-          </button>
-          <button onClick={async () => { setManifest(await api.exportProject(id)); refresh(); }}>导出回轨包</button>
-          <button className="danger" onClick={askDelete} title="删除整个项目（连同已出的图和片）">删除项目</button>
+          </AsyncButton>
+          <AsyncButton pendingText="正在导出…" onClick={exportBundle}>导出回轨包</AsyncButton>
+          <AsyncButton className="danger" pendingText="检查中…" onClick={askDelete} title="删除整个项目（连同已出的图和片）">删除项目</AsyncButton>
         </>}
       />
 
@@ -510,12 +552,9 @@ function ProjectBoard({
           <span>项目画风</span>
           <select
             value={p.styleId ?? ""}
-            disabled={active.length > 0}
+            disabled={active.length > 0 || styleBusy}
             title={active.length > 0 ? "有生成任务在途，完成后再切换画风" : "切换后续生成使用的画风资产"}
-            onChange={async (event) => {
-              await api.updateProject(id, { styleId: event.target.value || null });
-              await refresh();
-            }}
+            onChange={(event) => updateStyle(event.target.value)}
           >
             <option value="">（未选择画风）</option>
             {styles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.lora ? " · LoRA" : ""}</option>)}
@@ -537,14 +576,15 @@ function ProjectBoard({
             {VID_PROVIDERS.map((x) => <option key={x.id} value={x.id} disabled={!ready(x.id)}>{x.label}{ready(x.id) ? "" : "（未配置）"}</option>)}
           </select>
         </label>
-        <button
+        <AsyncButton
           className="primary toolbar-cta"
           disabled={active.length > 0 || !selectedProviderState.enabled}
+          pendingText="提交中…"
           title={active.length > 0 ? "有任务在途，跑完再补" : selectedProviderState.reason}
-          onClick={async () => { await api.auto(id, kfProvider, vidProvider); refresh(); }}
+          onClick={async () => { await api.auto(id, kfProvider, vidProvider); await refresh(); }}
         >
           {active.length > 0 ? "任务进行中…" : "▶ 全自动补齐"}
-        </button>
+        </AsyncButton>
       </section>
 
       {active.length > 0 && (
@@ -553,31 +593,33 @@ function ProjectBoard({
           {active.map((j) => (
             <span key={j.id} className="job-chip">
               {jobLabel(j)} · {jobPhaseText(j)}
-              <button
+              <AsyncButton
                 type="button"
                 className="job-chip-cancel"
+                pendingText="…"
                 title="中止这个任务"
                 aria-label={`中止 ${jobLabel(j)}`}
                 onClick={() => cancel([j.id])}
               >
                 ✕
-              </button>
+              </AsyncButton>
             </span>
           ))}
-          <button type="button" className="mini" onClick={cancelAll}>全部中止</button>
+          <AsyncButton type="button" className="mini" pendingText="中止中…" onClick={cancelAll}>全部中止</AsyncButton>
         </div>
       )}
       {failed.length > 0 && (
         <div className="warn bad">
-          <button
+          <AsyncButton
             type="button"
             className="warn-dismiss"
+            pendingText="…"
             title="知道了，清掉这些失败记录"
             aria-label="关闭失败提示"
             onClick={() => dismiss(failed.map((j) => j.id))}
           >
             ✕
-          </button>
+          </AsyncButton>
           {failed.slice(-3).map((j) => (
             <div key={j.id}>
               s{j.shotIndex} {j.kind} 失败：{j.error}
@@ -588,15 +630,16 @@ function ProjectBoard({
       )}
       {warned.length > 0 && (
         <div className="warn">
-          <button
+          <AsyncButton
             type="button"
             className="warn-dismiss"
+            pendingText="…"
             title="知道了，清掉这些告警"
             aria-label="关闭告警提示"
             onClick={() => dismiss(warned.map((j) => j.id))}
           >
             ✕
-          </button>
+          </AsyncButton>
           {warned.slice(-3).map((j) => (
             <div key={j.id}>
               s{j.shotIndex} {j.kind === "keyframe" ? "图" : "片"} 告警：{(j.warnings ?? []).join("；")}
@@ -622,7 +665,7 @@ function ProjectBoard({
           <div><h2>镜头工作区</h2><p>按镜审阅文本、Keyframe 和视频；橙色描边表示当前选用候选。</p></div>
           <span className="section-count">{p.shotsView.length} 镜</span>
         </div>
-        {p.shotsView.map((shot: any) => <ShotCard key={shot.index} p={p} shot={shot} kfProvider={kfProvider} vidProvider={vidProvider} onChanged={refresh} />)}
+        {p.shotsView.map((shot: any) => <ShotCard key={shot.index} p={p} shot={shot} kfProvider={kfProvider} vidProvider={vidProvider} jobs={jobs} onChanged={refresh} />)}
       </section>
 
       {manifest && <ManifestView manifest={manifest} pid={id} onClose={() => setManifest(null)} />}
@@ -679,7 +722,7 @@ function DeleteProjectModal({ preview, onCancel, onConfirm }: { preview: any; on
         </ul>
         <div className="form-actions">
           <button onClick={onCancel}>取消</button>
-          <button className="danger" onClick={onConfirm}>确认删除</button>
+          <AsyncButton className="danger" pendingText="删除中…" onClick={onConfirm}>确认删除</AsyncButton>
         </div>
       </div>
     </div>
@@ -693,7 +736,7 @@ function MediaPreview({
 }: {
   kind: "keyframe" | "video";
   file: string; url: string; idx: number; total: number; chosen: boolean;
-  onPrev: () => void; onNext: () => void; onChoose: () => void; onDelete: () => void; onClose: () => void;
+  onPrev: () => void; onNext: () => void; onChoose: () => void | Promise<void>; onDelete: () => void | Promise<void>; onClose: () => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -720,8 +763,8 @@ function MediaPreview({
           {total > 1 && <button className="preview-nav next" title="下一张（→）" onClick={onNext}>›</button>}
         </div>
         <div className="media-preview-actions">
-          <button className="primary" disabled={chosen} onClick={onChoose}>{chosen ? "✓ 当前选用" : "选用此候选"}</button>
-          <button className="danger" onClick={onDelete}>删除此候选</button>
+          <AsyncButton className="primary" disabled={chosen} pendingText="选用中…" onClick={onChoose}>{chosen ? "✓ 当前选用" : "选用此候选"}</AsyncButton>
+          <AsyncButton className="danger" pendingText="删除中…" onClick={onDelete}>删除此候选</AsyncButton>
           <span className="dim small">← → 切换候选 · Esc 关闭</span>
         </div>
       </div>
@@ -734,20 +777,24 @@ function ShotCard({
   shot,
   kfProvider,
   vidProvider,
+  jobs,
   onChanged,
 }: {
   p: any;
   shot: any;
   kfProvider: string;
   vidProvider: string;
-  onChanged: () => void;
+  jobs: any[];
+  onChanged: () => void | Promise<void>;
 }) {
   const [preview, setPreview] = useState<{ kind: "keyframe" | "video"; idx: number } | null>(null);
   // 服务端算好的悬空标记：选中项已不在候选里（产物被删/清盘/换机器），只提示不代改
   const dangling: { keyframe?: string; video?: string } = shot.danglingChoices ?? {};
+  const keyframeActive = jobs.some((job) => job.shotIndex === shot.index && job.kind === "keyframe" && (job.status === "queued" || job.status === "running"));
+  const videoActive = jobs.some((job) => job.shotIndex === shot.index && job.kind === "video" && (job.status === "queued" || job.status === "running"));
   const gen = async (kind: "keyframe" | "video", provider: string) => {
     await api.generate(p.id, shot.index, kind, provider);
-    onChanged();
+    await onChanged();
   };
   const remove = async (kind: "keyframe" | "video", file: string) => {
     try {
@@ -760,7 +807,7 @@ function ShotCard({
       ].filter(Boolean);
       if (!window.confirm(`确认删除 ${kind === "keyframe" ? "keyframe" : "视频"}「${file}」？\n\n${impacts.join("\n")}`)) return;
       await api.deleteOutput(p.id, shot.index, kind, file);
-      onChanged();
+      await onChanged();
     } catch (error) {
       window.alert(`删除失败：${error instanceof Error ? error.message : String(error)}`);
     }
@@ -782,9 +829,9 @@ function ShotCard({
         <div className="media-col">
           <div className="media-head">
             <span><b>Keyframe</b><small>{shot.keyframes.length} 个候选</small></span>
-            <button className="mini" onClick={() => gen("keyframe", kfProvider)}>
-              {shot.keyframes.length ? "重 roll" : "出图"}
-            </button>
+            <AsyncButton className="mini" disabled={keyframeActive} pendingText="提交中…" onClick={() => gen("keyframe", kfProvider)}>
+              {keyframeActive ? "出图任务中…" : shot.keyframes.length ? "重 roll" : "出图"}
+            </AsyncButton>
           </div>
           {dangling.keyframe && (
             <div className="dangling" title={`选中的「${dangling.keyframe}」已不在候选中——文件可能被删或换过机器。选择本身没丢，把文件放回即可恢复。`}>
@@ -800,9 +847,9 @@ function ShotCard({
                   title={`${f}（点击放大预览）`}
                   onClick={() => setPreview({ kind: "keyframe", idx: i })}
                 />
-                <button className="media-delete" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("keyframe", f)}>
+                <AsyncButton className="media-delete" pendingText="…" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("keyframe", f)}>
                   ×
-                </button>
+                </AsyncButton>
               </div>
             ))}
             {shot.keyframes.length === 0 && <div className="dim small empty">待出图</div>}
@@ -811,9 +858,9 @@ function ShotCard({
         <div className="media-col">
           <div className="media-head">
             <span><b>视频</b><small>{shot.videos.length} 个候选</small></span>
-            <button className="mini" disabled={shot.keyframes.length === 0} onClick={() => gen("video", vidProvider)}>
-              {shot.videos.length ? "重 roll" : "出片"}
-            </button>
+            <AsyncButton className="mini" disabled={shot.keyframes.length === 0 || videoActive} pendingText="提交中…" onClick={() => gen("video", vidProvider)}>
+              {videoActive ? "出片任务中…" : shot.videos.length ? "重 roll" : "出片"}
+            </AsyncButton>
           </div>
           {dangling.video && (
             <div className="dangling" title={`选中的「${dangling.video}」已不在候选中。导出会回落到该镜其余候选；没有候选则跳过这一镜。`}>
@@ -836,9 +883,9 @@ function ShotCard({
                 {/* 徽章只标出身不判优劣；title 挂不上去（.media-badge 是 pointer-events:none，
                     否则会挡住点开放大预览），故文字本身要自解释 */}
                 {tierBadge(f) && <span className="media-badge">{tierBadge(f)}</span>}
-                <button className="media-delete" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("video", f)}>
+                <AsyncButton className="media-delete" pendingText="…" title="永久删除" aria-label={`删除 ${f}`} onClick={() => remove("video", f)}>
                   ×
-                </button>
+                </AsyncButton>
               </div>
             ))}
             {shot.videos.length === 0 && <div className="dim small empty">待出片</div>}
@@ -861,7 +908,7 @@ function ShotCard({
             chosen={shot.choices[preview.kind] === file}
             onPrev={() => setPreview((s) => s && { ...s, idx: (s.idx - 1 + list.length) % list.length })}
             onNext={() => setPreview((s) => s && { ...s, idx: (s.idx + 1) % list.length })}
-            onChoose={async () => { await api.choose(p.id, shot.index, preview.kind, file); onChanged(); }}
+            onChoose={async () => { await api.choose(p.id, shot.index, preview.kind, file); await onChanged(); }}
             onDelete={async () => { await remove(preview.kind, file); setPreview(null); }}
             onClose={() => setPreview(null)}
           />
@@ -925,9 +972,11 @@ function ManifestView({ manifest, pid, onClose }: { manifest: any; pid: string; 
   );
 }
 
-function StylesPage({ styles, onChanged }: { styles: any[]; onChanged: () => void }) {
+function StylesPage({ styles, onChanged }: { styles: any[]; onChanged: () => void | Promise<void> }) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const importLock = useRef(false);
 
   return (
     <div className="panel styles-page">
@@ -938,23 +987,28 @@ function StylesPage({ styles, onChanged }: { styles: any[]; onChanged: () => voi
         meta={<><span className="meta-pill">{styles.length} 个画风</span><span className="meta-pill success">{styles.filter((style) => style.lora).length} 个已绑定 LoRA</span></>}
         actions={<div className="page-actions-row">
           <button className="primary" onClick={() => setCreating((x) => !x)}>{creating ? "取消新增" : "＋ 新增画风"}</button>
-          <label className="button-like">
-            导入 Style Pack
+          <label className="button-like" aria-disabled={importing}>
+            {importing ? "导入中…" : "导入 Style Pack"}
             <input
               type="file"
               accept="application/json,.json"
               hidden
               onChange={async (event) => {
                 const file = event.target.files?.[0];
-                if (!file) return;
+                if (!file || importLock.current) return;
+                importLock.current = true;
+                setImporting(true);
                 try {
                   await api.importStylePack(JSON.parse(await file.text()), "rename");
                   setError("");
-                  onChanged();
+                  await onChanged();
                 } catch (e) {
                   setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  importLock.current = false;
+                  setImporting(false);
+                  event.target.value = "";
                 }
-                event.target.value = "";
               }}
             />
           </label>
@@ -969,7 +1023,7 @@ function StylesPage({ styles, onChanged }: { styles: any[]; onChanged: () => voi
   );
 }
 
-function CreateStyleForm({ onCreated }: { onCreated: () => void }) {
+function CreateStyleForm({ onCreated }: { onCreated: () => void | Promise<void> }) {
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -979,19 +1033,19 @@ function CreateStyleForm({ onCreated }: { onCreated: () => void }) {
       <div className="form-actions style-create-fields">
         <label>ID <span>小写字母、数字和短横线</span><input value={id} onChange={(e) => setId(e.target.value)} placeholder="warm-home" /></label>
         <label>显示名称 <span>用于项目选择器</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="暖色家庭插画" /></label>
-        <button className="primary" disabled={!id || !name} onClick={async () => {
+        <AsyncButton className="primary" disabled={!id || !name} pendingText="创建中…" onClick={async () => {
           try {
             await api.createStyle({ id, name, styleLock: "", negatives: "", refs: [] });
-            onCreated();
+            await onCreated();
           } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-        }}>创建画风</button>
+        }}>创建画风</AsyncButton>
       </div>
       {error && <div className="warn bad">{error}</div>}
     </div>
   );
 }
 
-function StyleEditor({ style, allStyles, onChanged }: { style: any; allStyles: any[]; onChanged: () => void }) {
+function StyleEditor({ style, allStyles, onChanged }: { style: any; allStyles: any[]; onChanged: () => void | Promise<void> }) {
   const [draft, setDraft] = useState({
     name: style.name ?? "",
     styleLock: style.styleLock ?? "",
@@ -1002,12 +1056,14 @@ function StyleEditor({ style, allStyles, onChanged }: { style: any; allStyles: a
     license: style.license ?? "",
   });
   const [msg, setMsg] = useState("");
+  const [uploadingRefs, setUploadingRefs] = useState(false);
+  const uploadRefsLock = useRef(false);
   const field = (key: keyof typeof draft) => ({
     value: draft[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft((x) => ({ ...x, [key]: e.target.value })),
   });
   const save = async () => {
-    try { await api.saveStyle(style.id, draft); setMsg("已保存"); onChanged(); }
+    try { await api.saveStyle(style.id, draft); setMsg("已保存"); await onChanged(); }
     catch (e) { setMsg(`保存失败：${e instanceof Error ? e.message : e}`); }
   };
   const removeWhole = async () => {
@@ -1024,7 +1080,7 @@ function StyleEditor({ style, allStyles, onChanged }: { style: any; allStyles: a
       }
       if (!window.confirm(`永久删除整个画风「${style.name}」及其本地参考图？此操作不能撤销。`)) return;
       await api.deleteStyle(style.id, { replacementStyleId, force });
-      onChanged();
+      await onChanged();
     } catch (e) { setMsg(`删除失败：${e instanceof Error ? e.message : e}`); }
   };
   const exportPack = async () => {
@@ -1039,7 +1095,7 @@ function StyleEditor({ style, allStyles, onChanged }: { style: any; allStyles: a
     <div className="style-card">
       <div className="style-card-head">
         <div className="style-identity"><span className="style-avatar">{style.name?.slice(0, 1) || "风"}</span><div><h2>{style.name}</h2><div><code>{style.id}</code><span className={`meta-pill compact ${style.lora ? "success" : ""}`}>{style.lora ? "LoRA 已绑定" : "无 LoRA"}</span></div></div></div>
-        <div className="page-actions-row"><button onClick={exportPack}>导出 Pack</button><button className="danger" onClick={removeWhole}>删除整个画风</button></div>
+        <div className="page-actions-row"><AsyncButton pendingText="导出中…" onClick={exportPack}>导出 Pack</AsyncButton><AsyncButton className="danger" pendingText="处理中…" onClick={removeWhole}>删除整个画风</AsyncButton></div>
       </div>
       <div className="style-editor-layout">
         <section className="style-copy-panel">
@@ -1051,12 +1107,19 @@ function StyleEditor({ style, allStyles, onChanged }: { style: any; allStyles: a
             <label>负面提示 · EN<textarea className="style-textarea short" {...field("negativesEn")} /></label>
           </div>
           <label>维护备注<textarea className="style-textarea short" {...field("notes")} /></label>
-          <div className="form-actions"><button className="primary" onClick={save}>保存修改</button><span className="dim">{msg}</span></div>
+          <div className="form-actions"><AsyncButton className="primary" pendingText="保存中…" onClick={save}>保存修改</AsyncButton><span className="dim">{msg}</span></div>
         </section>
         <aside className="style-assets-panel">
-          <div className="section-heading"><div><h3>参考图</h3><p>{style.refs.length} 张画风锚图</p></div><label className="button-like small-button">＋ 添加图片<input type="file" accept="image/*" multiple hidden onChange={async (e) => { if (e.target.files?.length) { await api.uploadStyleRefs(style.id, e.target.files); onChanged(); } e.target.value = ""; }} /></label></div>
+          <div className="section-heading"><div><h3>参考图</h3><p>{style.refs.length} 张画风锚图</p></div><label className="button-like small-button" aria-disabled={uploadingRefs}>{uploadingRefs ? "上传中…" : "＋ 添加图片"}<input type="file" accept="image/*" multiple hidden disabled={uploadingRefs} onChange={async (e) => {
+            if (!e.target.files?.length || uploadRefsLock.current) return;
+            uploadRefsLock.current = true;
+            setUploadingRefs(true);
+            try { await api.uploadStyleRefs(style.id, e.target.files); setMsg(""); await onChanged(); }
+            catch (error) { setMsg(`上传失败：${error instanceof Error ? error.message : String(error)}`); }
+            finally { uploadRefsLock.current = false; setUploadingRefs(false); e.target.value = ""; }
+          }} /></label></div>
           <div className="style-refs">
-            {style.refs.map((f: string) => <div className="style-ref-item" key={f}><img src={styleRef(style.id, f)} title={f} /><button className="media-delete" title="删除参考图" onClick={async () => { if (!window.confirm(`永久删除参考图「${f}」？`)) return; await api.deleteStyleRef(style.id, f); onChanged(); }}>×</button></div>)}
+            {style.refs.map((f: string) => <div className="style-ref-item" key={f}><img src={styleRef(style.id, f)} title={f} /><AsyncButton className="media-delete" pendingText="…" title="删除参考图" onClick={async () => { if (!window.confirm(`永久删除参考图「${f}」？`)) return; await api.deleteStyleRef(style.id, f); await onChanged(); }}>×</AsyncButton></div>)}
             {style.refs.length === 0 && <div className="empty-state"><b>暂无参考图</b><span>上传少量能够代表线条、色温和材质的锚图。</span></div>}
           </div>
         </aside>
@@ -1215,7 +1278,7 @@ function LoraPage({ styles, onStylesChanged }: { styles: any[]; onStylesChanged:
           </div>
           <label>附加参数（每行一个）<textarea className="style-textarea short mono" value={form.extraArgs} onChange={(e) => setField("extraArgs", e.target.value)} /></label>
           <label className="inline-check"><input type="checkbox" checked={form.dryRun} onChange={(e) => setField("dryRun", e.target.checked)} />无 GPU 假训练（仅用于端到端验证）</label>
-          <div className="form-actions"><button onClick={validate}>提交前检查</button><button className="primary" onClick={submit}>提交训练</button></div>
+          <div className="form-actions"><AsyncButton pendingText="检查中…" onClick={validate}>提交前检查</AsyncButton><AsyncButton className="primary" pendingText="提交中…" onClick={submit}>提交训练</AsyncButton></div>
           {preflight && <div className={`warn ${preflight.ok ? "" : "bad"}`}>{preflight.ok ? `检查通过 · ${preflight.adapter}` : `缺失：${preflight.missing.join("、")}`}</div>}
           {message && <div className="warn">{message}</div>}
         </section>
@@ -1241,9 +1304,9 @@ function LoraJobDetail({ job, log, styles, publishStyle, setPublishStyle, onChan
     {job.blockedReason && <div className="warn">GPU 阻塞：{job.blockedReason}</div>}
     {job.error && <div className="warn bad">{job.error}</div>}
     <div className="row compact">
-      {canCancel && <button className="danger" onClick={async () => { if (!window.confirm(`取消任务 ${job.id}？`)) return; await api.cancelLora(job.id); await onChanged(); }}>取消</button>}
-      {canResume && <button onClick={async () => { await api.resumeLora(job.id); await onChanged(); }}>从 checkpoint 恢复</button>}
-      {job.manifest && <><select value={publishStyle} onChange={(e) => setPublishStyle(e.target.value)}><option value="">选择发布画风</option>{styles.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}</select><button className="primary" disabled={!publishStyle} onClick={async () => { await api.publishLora(job.id, publishStyle); await onChanged(); }}>发布到画风</button></>}
+      {canCancel && <AsyncButton className="danger" pendingText="取消中…" onClick={async () => { if (!window.confirm(`取消任务 ${job.id}？`)) return; await api.cancelLora(job.id); await onChanged(); }}>取消</AsyncButton>}
+      {canResume && <AsyncButton pendingText="恢复中…" onClick={async () => { await api.resumeLora(job.id); await onChanged(); }}>从 checkpoint 恢复</AsyncButton>}
+      {job.manifest && <><select value={publishStyle} onChange={(e) => setPublishStyle(e.target.value)}><option value="">选择发布画风</option>{styles.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}</select><AsyncButton className="primary" disabled={!publishStyle} pendingText="发布中…" onClick={async () => { await api.publishLora(job.id, publishStyle); await onChanged(); }}>发布到画风</AsyncButton></>}
     </div>
     <h3 className="detail-subhead">Checkpoints</h3>
     <ul className="checkpoint-list">{job.checkpoints.map((checkpoint) => <li key={`${checkpoint.step}-${checkpoint.path}`}>step {checkpoint.step} · {checkpoint.path}</li>)}{job.checkpoints.length === 0 && <li className="dim">尚无 checkpoint</li>}</ul>
@@ -1262,6 +1325,7 @@ function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
   const [engine, setEngine] = useState<any>(null);
   const [engineError, setEngineError] = useState("");
   const [engineBusy, setEngineBusy] = useState(false);
+  const engineLock = useRef(false);
   const inspect = useCallback(async () => {
     setDiagnosticBusy(true);
     try {
@@ -1297,6 +1361,8 @@ function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
 
   const engineAction = async (action: "install" | "start" | "stop") => {
     if (action === "install" && !window.confirm("现在下载本地推理组件？主程序仍可继续使用云端模型；模型权重不会自动下载。")) return;
+    if (engineLock.current) return;
+    engineLock.current = true;
     setEngineBusy(true);
     setEngineError("");
     try {
@@ -1306,6 +1372,7 @@ function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
     } catch (error) {
       setEngineError(error instanceof Error ? error.message : String(error));
     } finally {
+      engineLock.current = false;
       setEngineBusy(false);
     }
   };
@@ -1338,9 +1405,9 @@ function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
         <div className="section-heading">
           <div><h2>现有 ComfyUI 与运行诊断</h2><p>连接地址：{config?.comfyUrl ?? "读取中…"}。仅在你主动点击时读取 system_stats、object_info 和 queue；不会提交 prompt、加载模型或调用付费服务。</p></div>
           <div className="form-actions">
-            <button onClick={inspect} disabled={diagnosticBusy}>{diagnosticBusy ? "检测中…" : "检测现有 ComfyUI"}</button>
-            {diagnostic?.service?.state === "ready" && !config?.localInferenceEnabled && <button className="primary" onClick={() => useExistingComfy(true)} disabled={diagnosticBusy}>使用此 ComfyUI</button>}
-            {config?.localInferenceEnabled && !engine?.running && <button onClick={() => useExistingComfy(false)} disabled={diagnosticBusy}>停用本地推理</button>}
+            <AsyncButton onClick={inspect} disabled={diagnosticBusy} pendingText="检测中…">检测现有 ComfyUI</AsyncButton>
+            {diagnostic?.service?.state === "ready" && !config?.localInferenceEnabled && <AsyncButton className="primary" onClick={() => useExistingComfy(true)} disabled={diagnosticBusy} pendingText="启用中…">使用此 ComfyUI</AsyncButton>}
+            {config?.localInferenceEnabled && !engine?.running && <AsyncButton onClick={() => useExistingComfy(false)} disabled={diagnosticBusy} pendingText="停用中…">停用本地推理</AsyncButton>}
           </div>
         </div>
         {!diagnostic && <div className="empty-state compact">这里也支持自行启动的 ComfyUI；不要求先安装上方的托管组件。点击“检测现有 ComfyUI”后再决定是否启用。</div>}
@@ -1349,7 +1416,7 @@ function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
       <section className="surface-card config-card">
         <div className="section-heading"><div><h2>工作台配置</h2><p>管理服务地址、workflow 模板、节点映射、云端密钥状态、分辨率和成本单价。</p></div><span className="step-badge muted">JSON</span></div>
         <textarea className="md-input mono config-editor" value={text} onChange={(e) => setText(e.target.value)} />
-        <div className="form-actions"><button className="primary" onClick={async () => { try { const next = await api.saveConfig(JSON.parse(text)); setConfig(next); setText(JSON.stringify(next, null, 2)); setMsg("已保存"); await onChanged(); } catch (e) { setMsg(`保存失败：${e instanceof Error ? e.message : e}`); } }}>保存配置</button><span className="dim">{msg || "修改后保存，新的生成任务将使用最新配置。"}</span></div>
+        <div className="form-actions"><AsyncButton className="primary" pendingText="保存中…" onClick={async () => { try { const next = await api.saveConfig(JSON.parse(text)); setConfig(next); setText(JSON.stringify(next, null, 2)); setMsg("已保存"); await onChanged(); } catch (e) { setMsg(`保存失败：${e instanceof Error ? e.message : e}`); } }}>保存配置</AsyncButton><span className="dim">{msg || "修改后保存，新的生成任务将使用最新配置。"}</span></div>
       </section>
     </div>
   );
@@ -1359,6 +1426,7 @@ function LocalEnginePanel({ engine, busy, error, onAction, onRefresh }: { engine
   const [modelsDir, setModelsDir] = useState("");
   const [modelsDirMessage, setModelsDirMessage] = useState("");
   const [refreshMessage, setRefreshMessage] = useState("");
+  const modelsDirLock = useRef(false);
   const active = ["queued", "downloading", "verifying", "extracting", "pruning", "starting", "stopping"].includes(engine?.phase);
   const phaseLabel: Record<string, string> = {
     "not-installed": "未安装", queued: "准备下载", downloading: "下载中", verifying: "校验中", extracting: "解压中", pruning: "精简中",
@@ -1368,6 +1436,8 @@ function LocalEnginePanel({ engine, busy, error, onAction, onRefresh }: { engine
     if (engine?.modelsDir) setModelsDir(engine.modelsDir);
   }, [engine?.modelsDir]);
   const saveModelsDir = async (path: string) => {
+    if (modelsDirLock.current) return;
+    modelsDirLock.current = true;
     setModelsDirMessage("");
     try {
       const next = await api.setLocalModelsDir(path);
@@ -1376,6 +1446,8 @@ function LocalEnginePanel({ engine, busy, error, onAction, onRefresh }: { engine
       await onRefresh();
     } catch (e) {
       setModelsDirMessage(`修改失败：${e instanceof Error ? e.message : e}`);
+    } finally {
+      modelsDirLock.current = false;
     }
   };
   return <section className="surface-card local-engine-card">
@@ -1395,17 +1467,17 @@ function LocalEnginePanel({ engine, busy, error, onAction, onRefresh }: { engine
       <label htmlFor="local-models-dir"><b>托管组件的模型目录</b><span>只供工作台按需安装的组件使用；连接现有 ComfyUI 时，由对方自己的 models / extra_model_paths.yaml 管理模型。</span></label>
       <div className="model-directory-row">
         <input id="local-models-dir" value={modelsDir} onChange={(event) => setModelsDir(event.target.value)} disabled={busy || active || engine?.running} spellCheck={false} />
-        <button disabled={busy || active || engine?.running || !modelsDir.trim()} onClick={() => saveModelsDir(modelsDir)}>保存位置</button>
-        <button disabled={busy || active || engine?.running} onClick={() => saveModelsDir("")}>恢复默认</button>
+        <AsyncButton disabled={busy || active || engine?.running || !modelsDir.trim()} pendingText="保存中…" onClick={() => saveModelsDir(modelsDir)}>保存位置</AsyncButton>
+        <AsyncButton disabled={busy || active || engine?.running} pendingText="恢复中…" onClick={() => saveModelsDir("")}>恢复默认</AsyncButton>
       </div>
       {modelsDirMessage && <span className="dim small">{modelsDirMessage}</span>}
     </div>}
     {error && <div className="warn bad">{error}</div>}
     <div className="form-actions">
-      {!engine?.installed && <button className="primary" disabled={busy || active || engine?.supported === false} onClick={() => onAction("install")}>{active ? "安装进行中…" : "下载本地推理组件"}</button>}
-      {engine?.installed && !engine?.running && <button className="primary" disabled={busy || active} onClick={() => onAction("start")}>启动本地推理</button>}
-      {engine?.running && <button disabled={busy || active} onClick={() => onAction("stop")}>停止本地推理</button>}
-      <button disabled={busy} onClick={async () => { await onRefresh(); setRefreshMessage(`托管组件状态已刷新 · ${new Date().toLocaleTimeString()}`); }}>刷新托管组件</button>
+      {!engine?.installed && <AsyncButton className="primary" disabled={busy || active || engine?.supported === false} pendingText="提交中…" onClick={() => onAction("install")}>{active ? "安装进行中…" : "下载本地推理组件"}</AsyncButton>}
+      {engine?.installed && !engine?.running && <AsyncButton className="primary" disabled={busy || active} pendingText="启动中…" onClick={() => onAction("start")}>启动本地推理</AsyncButton>}
+      {engine?.running && <AsyncButton disabled={busy || active} pendingText="停止中…" onClick={() => onAction("stop")}>停止本地推理</AsyncButton>}
+      <AsyncButton disabled={busy} pendingText="刷新中…" onClick={async () => { await onRefresh(); setRefreshMessage(`托管组件状态已刷新 · ${new Date().toLocaleTimeString()}`); }}>刷新托管组件</AsyncButton>
       <span className="dim small">云端出图和出片不需要安装此组件。</span>
     </div>
     {refreshMessage && <p className="dim small">{refreshMessage}；自行启动的 ComfyUI 请在下方检测。</p>}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
+import { AsyncButton } from "./AsyncButton.tsx";
 import {
   clampRect,
   displayToNatural,
@@ -57,6 +58,7 @@ export function CropperModal({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef<DragMode | null>(null);
+  const busyLock = useRef(false);
   const generationRef = character.generationRef;
 
   // 指针显示坐标 → 自然像素坐标
@@ -155,6 +157,8 @@ export function CropperModal({
   }, [crop, dims, source]);
 
   const save = async () => {
+    if (busyLock.current) return;
+    busyLock.current = true;
     setBusy(true);
     setError("");
     try {
@@ -162,6 +166,7 @@ export function CropperModal({
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      busyLock.current = false;
       setBusy(false);
     }
   };
@@ -273,13 +278,15 @@ export function CropperModal({
 
         {error && <div className="warn bad">保存失败：{error}</div>}
         <div className="form-actions crop-actions">
-          <button className="primary" disabled={busy || !dims} onClick={save}>{busy ? "保存中…" : crop ? "保存单人裁剪" : "使用整图作为主参考"}</button>
-          {generationRef?.status === "ready" && <button className="danger" disabled={busy} onClick={async () => {
+          <AsyncButton className="primary" disabled={busy || !dims} pendingText="保存中…" onClick={save}>{crop ? "保存单人裁剪" : "使用整图作为主参考"}</AsyncButton>
+          {generationRef?.status === "ready" && <AsyncButton className="danger" disabled={busy} pendingText="清除中…" onClick={async () => {
             if (!window.confirm("清除显式主参考并恢复首张原图回退？原始图片不会删除。")) return;
+            if (busyLock.current) return;
+            busyLock.current = true;
             setBusy(true);
             try { await api.clearCharacterGenerationReference(projectId, character.name); onSaved(); }
-            catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
-          }}>清除主参考</button>}
+            catch (e) { setError(e instanceof Error ? e.message : String(e)); busyLock.current = false; setBusy(false); }
+          }}>清除主参考</AsyncButton>}
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api.ts";
+import { AsyncButton } from "./AsyncButton.tsx";
 import { characterAssetUrl, CropperModal } from "./CropperModal.tsx";
 
 type RefPolicy = { refStrategy: "single-crop" | "multi-image" | "none"; refBudget: number };
@@ -56,7 +57,7 @@ export function CharacterPanel({
     if (!window.confirm(`永久删除源图「${file}」？该图会同时从两个参考集的可选范围消失。`)) return;
     try {
       await api.deleteCharRef(p.id, character.name, file);
-      onChanged();
+      await onChanged();
     } catch (error) {
       window.alert(`删除失败：${error instanceof Error ? error.message : String(error)}`);
     }
@@ -113,10 +114,14 @@ function CharacterCard({
   strategy: RefPolicy["refStrategy"];
   kfProvider: string;
   onEdit: (source: string) => void;
-  onRemoveSource: (file: string) => void;
+  onRemoveSource: (file: string) => void | Promise<void>;
   onChanged: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const busyLock = useRef(false);
+  const genLock = useRef(false);
+  const uploadLock = useRef(false);
+  const [uploading, setUploading] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [gen, setGen] = useState<{ running: boolean; mode?: string; error?: string; doneFile?: string; doneMode?: string }>({ running: false });
   const generationRef = c.generationRef ?? { status: c.refs.length ? "fallback" : "missing" };
@@ -125,7 +130,8 @@ function CharacterCard({
 
   // 用当前引擎生成人设图：入队 → 自轮询到完成 → 刷新（新图进源图库即刻可见）
   const generateRef = async (mode: "single" | "turnaround") => {
-    if (gen.running) return;
+    if (gen.running || genLock.current) return;
+    genLock.current = true;
     setGen({ running: true, mode });
     try {
       const submitted = await api.generateCharRef(p.id, c.name, { mode, provider: kfProvider });
@@ -148,11 +154,14 @@ function CharacterCard({
       setGen({ running: false, doneFile: outputFile, doneMode: mode });
     } catch (error) {
       setGen({ running: false, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      genLock.current = false;
     }
   };
 
   const toggleExclusion = async (file: string) => {
-    if (busy) return;
+    if (busy || busyLock.current) return;
+    busyLock.current = true;
     setBusy(true);
     try {
       const excluded: string[] = multiRef.excluded.includes(file)
@@ -164,6 +173,7 @@ function CharacterCard({
     } catch (error) {
       window.alert(`更新失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
+      busyLock.current = false;
       setBusy(false);
     }
   };
@@ -180,20 +190,26 @@ function CharacterCard({
             onClick={() => { setGenOpen((x) => !x); setGen((g) => (g.running ? g : { running: false })); }}
             title="用当前引擎生成人设参考图（无需已有图）"
           >{gen.running ? "生成中…" : "✨ 生成"}</button>
-          <label className="upload-btn">
-            ＋ 上传
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              hidden
+          <label className="upload-btn" aria-disabled={uploading}>
+            {uploading ? "上传中…" : "＋ 上传"}
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                disabled={uploading}
               onChange={async (e) => {
-                if (e.target.files?.length) {
+                if (e.target.files?.length && !uploadLock.current) {
+                  uploadLock.current = true;
+                  setUploading(true);
                   try {
                     await api.uploadCharRefs(p.id, c.name, e.target.files);
-                    onChanged();
+                    await onChanged();
                   } catch (error) {
                     window.alert(`上传失败：${error instanceof Error ? error.message : String(error)}`);
+                  } finally {
+                    uploadLock.current = false;
+                    setUploading(false);
                   }
                 }
                 // 清空 value：否则二次选同一文件不触发 onChange，重传链路静默断
@@ -207,8 +223,8 @@ function CharacterCard({
       {genOpen && (
         <div className="char-gen-panel">
           <div className="char-gen-row">
-            <button className="mini" disabled={gen.running} onClick={() => generateRef("single")}>单人立绘</button>
-            <button className="mini" disabled={gen.running} onClick={() => generateRef("turnaround")}>三视图设定表</button>
+            <AsyncButton className="mini" disabled={gen.running} pendingText="提交中…" onClick={() => generateRef("single")}>单人立绘</AsyncButton>
+            <AsyncButton className="mini" disabled={gen.running} pendingText="提交中…" onClick={() => generateRef("turnaround")}>三视图设定表</AsyncButton>
             <span className="dim small">引擎：{GEN_PROVIDER_LABEL[kfProvider] ?? kfProvider}</span>
           </div>
           <small className="dim">
@@ -265,12 +281,14 @@ function CharacterCard({
             </small>
           </div>
           {multiRef.status === "ready" && (
-            <button className="mini" disabled={busy} onClick={async () => {
+            <AsyncButton className="mini" disabled={busy} pendingText="恢复中…" onClick={async () => {
+              if (busyLock.current) return;
+              busyLock.current = true;
               setBusy(true);
               try { await api.clearMultiRefConfig(p.id, c.name); await onChanged(); }
               catch (error) { window.alert(`恢复失败：${error instanceof Error ? error.message : String(error)}`); }
-              finally { setBusy(false); }
-            }}>恢复默认全选</button>
+              finally { busyLock.current = false; setBusy(false); }
+            }}>恢复默认全选</AsyncButton>
           )}
         </div>
       )}
@@ -284,6 +302,7 @@ function CharacterCard({
               <button
                 type="button"
                 className="char-ref-source"
+                disabled={strategy === "multi-image" && busy}
                 title={strategy === "multi-image" ? `${f} · 点击${excluded ? "恢复入选" : "排除"}` : `${f} · 点击打开裁剪画布`}
                 onClick={() => (strategy === "multi-image" ? toggleExclusion(f) : onEdit(f))}
               >
@@ -295,7 +314,7 @@ function CharacterCard({
                 {strategy === "multi-image" && (
                   <button className="tile-btn" title="从这张裁一张进单人单图集" onClick={() => onEdit(f)}>✂</button>
                 )}
-                <button className="tile-btn danger" title="永久删除源图" onClick={() => onRemoveSource(f)}>×</button>
+                <AsyncButton className="tile-btn danger" pendingText="…" title="永久删除源图" onClick={() => onRemoveSource(f)}>×</AsyncButton>
               </div>
             </div>
           );

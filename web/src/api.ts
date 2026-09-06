@@ -7,6 +7,20 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+const exportRequests = new Map<string, Promise<any>>();
+
+function exportProjectOnce(id: string): Promise<any> {
+  const pending = exportRequests.get(id);
+  if (pending) return pending;
+  const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `export-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const request = req(`/api/v1/projects/${id}/export`, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+  }).finally(() => exportRequests.delete(id));
+  exportRequests.set(id, request);
+  return request;
+}
+
 export const api = {
   health: () => req("/api/v1/health"),
   comfyDiagnostic: () => req("/api/v1/diagnostics/comfyui"),
@@ -52,7 +66,8 @@ export const api = {
     }),
   auto: (id: string, keyframeProvider: string, videoProvider: string) =>
     req(`/api/v1/projects/${id}/auto`, { method: "POST", body: JSON.stringify({ keyframeProvider, videoProvider }) }),
-  exportProject: (id: string) => req(`/api/v1/projects/${id}/export`, { method: "POST" }),
+  // 同一项目的并发导出共用一条请求；服务端再按 key 缓存结果，覆盖传输重试。
+  exportProject: exportProjectOnce,
   jobs: (project?: string) => req(`/api/v1/jobs${project ? `?project=${project}` : ""}`),
   dismissJobs: (body: { project?: string; ids?: string[] }) =>
     req("/api/v1/jobs/dismiss", { method: "POST", body: JSON.stringify(body) }),

@@ -3,13 +3,25 @@ param(
   [string]$Version = '0.2.0-beta.1',
   [string]$BunPath = "$env:USERPROFILE\.bun\bin\bun.exe",
   [string]$FfmpegBin = 'C:\file\ffmpeg\bin',
-  [string]$SevenZipDir = 'C:\Program Files\7-Zip'
+  [string]$SevenZipDir = 'C:\Program Files\7-Zip',
+  [switch]$Publish,
+  [string]$PublishPath = 'T:\web\broadcast\exe\gitruck-ai-drama-desk-windows-x64.zip'
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $destination = [System.IO.Path]::GetFullPath((Join-Path $repo $OutputDir))
 $stage = Join-Path $destination 'Gitruck AI Drama Desk'
+
+$publishDestination = $null
+if ($Publish) {
+  $publishDestination = [System.IO.Path]::GetFullPath($PublishPath)
+  $publishDirectory = Split-Path -Parent $publishDestination
+  if (!(Test-Path -LiteralPath $publishDirectory -PathType Container)) {
+    throw "发布目录不存在或当前无法访问：$publishDirectory"
+  }
+}
+
   if (!(Test-Path -LiteralPath $BunPath -PathType Leaf)) { throw "找不到 Bun：$BunPath" }
   if (!(Test-Path -LiteralPath (Join-Path $FfmpegBin 'ffmpeg.exe'))) { throw "找不到 FFmpeg：$FfmpegBin" }
   if (!(Test-Path -LiteralPath (Join-Path $SevenZipDir '7z.exe'))) { throw "找不到 7-Zip：$SevenZipDir" }
@@ -73,6 +85,31 @@ try {
   Write-Host "云端主包：$zip"
   Write-Host ("压缩体积：{0:N1} MB" -f ($size / 1MB))
   Write-Host "SHA-256：$hash"
+
+  if ($Publish) {
+    $publishFileName = [System.IO.Path]::GetFileName($publishDestination)
+    $publishTemporary = Join-Path $publishDirectory ".$publishFileName.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+      Copy-Item -LiteralPath $zip -Destination $publishTemporary
+      $temporaryHash = (Get-FileHash -LiteralPath $publishTemporary -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($temporaryHash -ne $hash) {
+        throw '发布副本校验失败：源文件与临时文件的 SHA-256 不一致。'
+      }
+      Move-Item -LiteralPath $publishTemporary -Destination $publishDestination -Force
+    } finally {
+      if (Test-Path -LiteralPath $publishTemporary) {
+        Remove-Item -LiteralPath $publishTemporary -Force
+      }
+    }
+
+    $publishedSize = (Get-Item -LiteralPath $publishDestination).Length
+    $publishedHash = (Get-FileHash -LiteralPath $publishDestination -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($publishedSize -ne $size -or $publishedHash -ne $hash) {
+      throw '发布结果校验失败：目标文件与本次构建产物不一致。'
+    }
+    Write-Host "稳定下载包：$publishDestination"
+    Write-Host '发布校验：通过'
+  }
 } finally {
   Pop-Location
 }
