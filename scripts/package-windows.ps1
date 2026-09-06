@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$OutputDir = '.\dist\windows',
   [string]$Version = '0.2.0-beta.1',
   [string]$BunPath = "$env:USERPROFILE\.bun\bin\bun.exe",

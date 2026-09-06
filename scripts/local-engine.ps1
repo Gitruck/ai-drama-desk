@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('install', 'start', 'stop')]
   [string]$Action,
