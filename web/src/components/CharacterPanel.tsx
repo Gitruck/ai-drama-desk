@@ -41,11 +41,13 @@ export function CharacterPanel({
   p,
   kfProvider,
   refPolicies,
+  editingEnabled,
   onChanged,
 }: {
   p: any;
   kfProvider: string;
   refPolicies: Record<string, RefPolicy> | undefined;
+  editingEnabled: boolean;
   // 返回 Promise：勾选墙的整表提交必须等刷新落地才解锁下一次点击，否则陈旧基线会丢更新
   onChanged: () => void | Promise<void>;
 }) {
@@ -81,6 +83,7 @@ export function CharacterPanel({
             character={c}
             strategy={policy.refStrategy}
             kfProvider={kfProvider}
+            editingEnabled={editingEnabled}
             onEdit={(source) => setEditing({ character: c, source })}
             onRemoveSource={(file) => removeSource(c, file)}
             onChanged={onChanged}
@@ -105,6 +108,7 @@ function CharacterCard({
   character: c,
   strategy,
   kfProvider,
+  editingEnabled,
   onEdit,
   onRemoveSource,
   onChanged,
@@ -113,6 +117,7 @@ function CharacterCard({
   character: any;
   strategy: RefPolicy["refStrategy"];
   kfProvider: string;
+  editingEnabled: boolean;
   onEdit: (source: string) => void;
   onRemoveSource: (file: string) => void | Promise<void>;
   onChanged: () => void | Promise<void>;
@@ -123,6 +128,9 @@ function CharacterCard({
   const uploadLock = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState(c.description);
+  const [descriptionError, setDescriptionError] = useState("");
   const [gen, setGen] = useState<{ running: boolean; mode?: string; error?: string; doneFile?: string; doneMode?: string }>({ running: false });
   const generationRef = c.generationRef ?? { status: c.refs.length ? "fallback" : "missing" };
   const multiRef = c.multiRef ?? { status: c.refs.length ? "fallback" : "missing", included: c.refs, excluded: [] };
@@ -178,11 +186,40 @@ function CharacterCard({
     }
   };
 
+  const openDescriptionEditor = () => {
+    setDescriptionDraft(c.description);
+    setDescriptionError("");
+    setDescriptionOpen(true);
+  };
+
+  const saveDescription = async () => {
+    const next = descriptionDraft.trim();
+    if (!next) {
+      setDescriptionError("角色描述不能为空");
+      return;
+    }
+    setDescriptionError("");
+    try {
+      await api.updateCharacterDescription(p.id, c.name, next);
+      await onChanged();
+      setDescriptionOpen(false);
+    } catch (error) {
+      setDescriptionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <div className="char-card">
       <div className="char-head">
         <div><b>{c.name}</b><span>{c.refs.length} 张源图（两集共享）</span></div>
         <div className="char-head-actions">
+          <button
+            type="button"
+            className="upload-btn"
+            disabled={!editingEnabled || descriptionOpen}
+            title={editingEnabled ? "修改后续生成使用的角色描述" : "有生成任务在途，完成或中止后再修改"}
+            onClick={openDescriptionEditor}
+          >✎ 文字</button>
           <button
             type="button"
             className={`upload-btn ${genOpen ? "on" : ""}`}
@@ -320,7 +357,22 @@ function CharacterCard({
           );
         })}
       </div>
-      <div className="char-desc">{c.description.split("\n")[0]}</div>
+      {descriptionOpen ? (
+        <div className="story-text-editor character-text-editor">
+          <label>
+            角色描述
+            <span>会用于后续人设图与 Keyframe 生成；已出的候选不会自动改变。</span>
+            <textarea value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} autoFocus />
+          </label>
+          {descriptionError && <div className="inline-error">{descriptionError}</div>}
+          <div className="story-editor-actions">
+            <AsyncButton className="mini primary" disabled={!editingEnabled} pendingText="保存中…" onClick={saveDescription}>保存描述</AsyncButton>
+            <button className="mini" type="button" onClick={() => { setDescriptionOpen(false); setDescriptionError(""); }}>取消</button>
+          </div>
+        </div>
+      ) : (
+        <div className="char-desc">{c.description}</div>
+      )}
     </div>
   );
 }

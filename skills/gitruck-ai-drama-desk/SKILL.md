@@ -32,6 +32,8 @@ description: AI 动画制片工作台（ai-drama-desk）的驱动 skill——把
 | 目的 | HTTP API |
 |---|---|
 | 项目详情 | `GET /projects/<id>` |
+| 修改角色描述 | `PUT /projects/<id>/characters/<URL编码角色名>`，body `{description}` |
+| 修改镜头文字 | `PUT /projects/<id>/shots/<n>`，body `{title,durationSec,segment?,scene?,cast,stylePrefix?,description,sourceLines?}` |
 | 生成人设锚点 | `POST /projects/<id>/characters/<URL编码角色名>/generate-ref`，body `{mode, provider?, count?, desc?}` |
 | 上传宿主生图产物 | `POST /projects/<id>/characters/<URL编码角色名>/refs`，multipart 字段 `files` |
 | 单镜出图/出片 | `POST /projects/<id>/shots/<n>/keyframe` / `POST /projects/<id>/shots/<n>/video` |

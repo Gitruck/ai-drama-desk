@@ -331,19 +331,30 @@ button.job-chip-cancel:active { transform: none; }
 .char-ref-source:hover, .char-ref-source.source-on { border-color: var(--accent); }
 .char-ref-source img { width: 100%; height: 100%; border-radius: 6px; object-fit: cover; }
 .char-ref-source span { position: absolute; right: 2px; bottom: 2px; left: 2px; padding: 2px; border-radius: 4px; background: rgba(32,34,30,.78); color: #fff; font-size: 8px; line-height: 1.2; }
-.char-desc { display: -webkit-box; overflow: hidden; color: var(--dim); font-size: 11px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.char-desc { display: -webkit-box; overflow: hidden; color: var(--dim); font-size: 11px; line-height: 1.65; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .shots-section { margin-top: 34px; }
 .shot-card { display: grid; grid-template-columns: minmax(310px, .82fr) minmax(540px, 1.42fr); gap: 22px; margin: 12px 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm); }
+.shot-card.editing-text { grid-template-columns: minmax(450px, 1fr) minmax(540px, 1.18fr); align-items: start; }
 .shot-text { min-width: 0; padding: 2px 4px; }
 .shot-title { display: flex; align-items: flex-start; gap: 10px; }
-.shot-title > div { display: grid; gap: 2px; min-width: 0; }
-.shot-title > div b { font-size: 14px; }
-.shot-title > div span { color: var(--dim); font-size: 11px; }
+.shot-title-copy { display: grid; flex: 1 1 auto; gap: 2px; min-width: 0; }
+.shot-title-copy b { font-size: 14px; }
+.shot-title-copy span { color: var(--dim); font-size: 11px; }
+.shot-edit-button { flex: 0 0 auto; margin-left: auto; }
 .shot-index { display: inline-flex; flex: 0 0 auto; min-width: 38px; min-height: 28px; align-items: center; justify-content: center; border-radius: 7px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 700; }
 .shot-cast { display: flex; gap: 5px; flex-wrap: wrap; margin: 11px 0 7px 48px; }
 .shot-cast span { padding: 2px 7px; border-radius: 99px; background: var(--surface-strong); color: var(--dim); font-size: 10px; }
 .shot-prefix { margin: 9px 0 3px; color: var(--accent); font-size: 11px; }
 .shot-desc { margin: 6px 0 8px; line-height: 1.78; white-space: pre-wrap; }
+.story-text-editor { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface-soft); }
+.story-text-editor input, .story-text-editor textarea { width: 100%; background: var(--surface); }
+.story-text-editor textarea { min-height: 118px; resize: vertical; }
+.story-text-editor textarea.short { min-height: 70px; }
+.story-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.story-editor-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.story-editor-actions > span { color: var(--dim); font-size: 10px; line-height: 1.5; }
+.inline-error { color: var(--bad); font-size: 11px; line-height: 1.5; }
+.character-text-editor textarea { min-height: 128px; }
 .shot-media { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
 .media-col { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); }
 .media-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; margin-bottom: 8px; color: var(--dim); font-size: 11px; }
@@ -480,7 +491,7 @@ th { color: var(--dim); font-size: 10px; letter-spacing: .04em; text-transform: 
   .panel { padding-right: 28px; padding-left: 28px; }
   .project-toolbar { grid-template-columns: minmax(210px, 1fr) minmax(200px, 1fr) minmax(200px, 1fr) auto; }
   .toolbar-divider { display: none; }
-  .shot-card { grid-template-columns: 1fr; }
+  .shot-card, .shot-card.editing-text { grid-template-columns: 1fr; }
   .shot-media { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lora-layout { grid-template-columns: 1fr; }
   .lora-jobs-card { position: static; }
@@ -536,6 +547,7 @@ th { color: var(--dim); font-size: 10px; letter-spacing: .04em; text-transform: 
   .project-toolbar, .import-card, .workflow-card, .lora-form-card, .lora-jobs-card, .config-card, .local-engine-card { padding: 14px; }
   .local-engine-facts { grid-template-columns: 1fr; }
   .shot-card { padding: 12px; }
+  .story-editor-grid { grid-template-columns: 1fr; }
   .shot-media, .thumbs { grid-template-columns: 1fr; }
   .char-strip { grid-template-columns: 1fr; }
   .generation-ref-summary { grid-template-columns: 54px minmax(0, 1fr); }

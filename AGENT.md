@@ -112,6 +112,8 @@ bun run cli -- skills install [--agents ...] [--copy]          # 装 skill 到�
 | `POST /styles/import`、`GET /styles/<id>/pack` | 风格包导入/导出 |
 | `POST /projects` | 建项目：body `{storyboardMd, styleId?, slug?, name?}`（或预解析 `doc`）；返回 `{project, warnings}` |
 | `GET /projects`、`GET /projects/<id>` | 项目列表/详情 |
+| `PUT /projects/<id>/characters/<名>` | 修改角色描述：body `{description}`；不改角色名与参考图目录，有任务在途时拒绝 |
+| `PUT /projects/<id>/shots/<n>` | 修改镜头文字：body `{title,durationSec,segment?,scene?,cast,stylePrefix?,description,sourceLines?}`；不改镜号、候选与选择，有任务在途时拒绝 |
 | `POST /projects/<id>/characters/<名>/refs` | 上传角色源图（png/jpg/webp，≤20MB，按魔数校验） |
 | `POST /projects/<id>/characters/<名>/generate-ref` | 生成人设锚点：body `{mode:"single"\|"turnaround", provider?, count?, desc?}`；产物落源图库、即刻进双参考集 |
 | `POST /projects/<id>/shots/<n>/keyframe` | 单镜出图：body `{provider?}`，默认 `pixmind-image` |

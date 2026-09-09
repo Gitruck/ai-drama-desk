@@ -20,6 +20,8 @@ import {
   saveProject,
   setChoice,
   shotKey,
+  updateCharacterDescription,
+  updateShotText,
 } from "./lib/projects.ts";
 import {
   addStyleRefs,
@@ -425,7 +427,11 @@ export function createRequestHandler() {
         const body = await req.json();
         const p = getProject(m[1]);
         if (!p) return err("项目不存在", 404);
-        if (body.doc) p.doc = body.doc;
+        if (body.doc) {
+          const activeJobs = activeJobsOf(p.id);
+          if (activeJobs.length > 0) return err("项目仍有生成任务在途，任务结束后再修改分镜稿", 409, "CONFLICT", { jobs: activeJobs });
+          p.doc = body.doc;
+        }
         if (Object.prototype.hasOwnProperty.call(body, "styleId")) {
           const activeJobs = listJobs(p.id).filter((job) => job.status === "queued" || job.status === "running");
           if (activeJobs.length > 0) return err("项目仍有生成任务在途，任务结束后再切换画风", 409, "CONFLICT", { jobs: activeJobs.map((job) => job.id) });
@@ -439,6 +445,24 @@ export function createRequestHandler() {
         }
         if (body.name) p.name = body.name;
         saveProject(p);
+        return json(projectView(p.id));
+      }
+
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/characters\/([^/]+)$/);
+      if (m && req.method === "PUT") {
+        const busy = activeJobsOf(m[1]);
+        if (busy.length > 0) return err("项目仍有生成任务在途，任务结束后再修改角色描述", 409, "CONFLICT", { jobs: busy });
+        const body = await req.json();
+        const p = updateCharacterDescription(m[1], decodePathSegment(m[2]), body?.description);
+        return json(projectView(p.id));
+      }
+
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/shots\/(\d+)$/);
+      if (m && req.method === "PUT") {
+        const busy = activeJobsOf(m[1]);
+        if (busy.length > 0) return err("项目仍有生成任务在途，任务结束后再修改镜头文字", 409, "CONFLICT", { jobs: busy });
+        const body = await req.json();
+        const p = updateShotText(m[1], Number(m[2]), body);
         return json(projectView(p.id));
       }
 

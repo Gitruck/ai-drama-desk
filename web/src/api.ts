@@ -49,6 +49,10 @@ export const api = {
   /** 只解析不落盘：预览用，磁盘上不会多出项目 */
   previewProject: (body: any) => req("/api/v1/projects", { method: "POST", body: JSON.stringify({ ...body, dryRun: true }) }),
   updateProject: (id: string, patch: any) => req(`/api/v1/projects/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  updateCharacterDescription: (id: string, name: string, description: string) =>
+    req(`/api/v1/projects/${id}/characters/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ description }) }),
+  updateShotText: (id: string, shot: number, patch: any) =>
+    req(`/api/v1/projects/${id}/shots/${shot}`, { method: "PUT", body: JSON.stringify(patch) }),
   reparseProject: (id: string) => req(`/api/v1/projects/${id}/reparse`, { method: "POST" }),
   projectDeletionPreview: (id: string) => req(`/api/v1/projects/${id}/deletion-preview`),
   deleteProject: (id: string) =>

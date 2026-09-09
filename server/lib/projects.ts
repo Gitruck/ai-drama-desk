@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PROJECTS_DIR } from "./config.ts";
 import { parseStoryboard, validateDoc } from "./parse.ts";
-import type { Project, ShotChoices, StoryboardDoc } from "./types.ts";
+import type { Project, Shot, ShotChoices, StoryboardDoc } from "./types.ts";
 
 export class ProjectError extends Error {
   constructor(message: string, readonly status = 400, readonly code = "BAD_REQUEST", readonly details?: unknown) {
@@ -118,6 +118,70 @@ export function setChoice(p: Project, index: number, kind: "keyframe" | "video",
   const key = shotKey(index);
   p.choices[key] = { ...(p.choices[key] ?? {}), [kind]: file };
   saveProject(p);
+}
+
+function requiredText(value: unknown, label: string, maxLength: number): string {
+  if (typeof value !== "string") throw new ProjectError(`${label}必须是文字`);
+  const text = value.trim();
+  if (!text) throw new ProjectError(`${label}不能为空`);
+  if (text.length > maxLength) throw new ProjectError(`${label}不能超过 ${maxLength} 个字符`);
+  return text;
+}
+
+function optionalText(value: unknown, label: string, maxLength: number): string | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value !== "string") throw new ProjectError(`${label}必须是文字`);
+  const text = value.trim();
+  if (text.length > maxLength) throw new ProjectError(`${label}不能超过 ${maxLength} 个字符`);
+  return text || undefined;
+}
+
+/** 只改角色文字，不触碰角色名、参考图目录和双参考集指针。 */
+export function updateCharacterDescription(projectId: string, name: string, value: unknown): Project {
+  const p = getProject(projectId);
+  if (!p) throw new ProjectError("项目不存在", 404, "NOT_FOUND");
+  const character = p.doc.characters.find((item) => item.name === name);
+  if (!character) throw new ProjectError("角色不存在", 404, "NOT_FOUND");
+  character.description = requiredText(value, "角色描述", 20_000);
+  saveProject(p);
+  return p;
+}
+
+export type ShotTextPatch = Pick<Shot, "title" | "durationSec" | "cast" | "description"> &
+  Partial<Pick<Shot, "segment" | "scene" | "sourceLines" | "stylePrefix">>;
+
+/**
+ * 只改镜头的文字 IR；镜号、候选产物与 choices 都保持原样。
+ * API 要求提交完整编辑表单，避免空 patch 看似成功却什么也没改。
+ */
+export function updateShotText(projectId: string, shotIndex: number, patch: unknown): Project {
+  const p = getProject(projectId);
+  if (!p) throw new ProjectError("项目不存在", 404, "NOT_FOUND");
+  const shot = p.doc.shots.find((item) => item.index === shotIndex);
+  if (!shot) throw new ProjectError("分镜不存在", 404, "NOT_FOUND");
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new ProjectError("需要镜头文字内容");
+  const body = patch as Record<string, unknown>;
+
+  const rawDuration = body.durationSec;
+  if (rawDuration !== null && (typeof rawDuration !== "number" || !Number.isFinite(rawDuration) || rawDuration <= 0 || rawDuration > 3600)) {
+    throw new ProjectError("建议时长必须留空，或填写 0–3600 秒之间的数字");
+  }
+  if (!Array.isArray(body.cast) || body.cast.some((item) => typeof item !== "string")) {
+    throw new ProjectError("出场角色必须是文字列表");
+  }
+  const cast = [...new Set(body.cast.map((item) => (item as string).trim()).filter(Boolean))];
+  if (cast.length > 100 || cast.some((item) => item.length > 200)) throw new ProjectError("出场角色列表过长");
+
+  shot.title = requiredText(body.title, "镜头标题", 500);
+  shot.durationSec = rawDuration as number | null;
+  shot.segment = optionalText(body.segment, "蒙太奇段名", 500);
+  shot.scene = optionalText(body.scene, "场景", 2_000);
+  shot.cast = cast;
+  shot.stylePrefix = optionalText(body.stylePrefix, "视觉基调", 10_000);
+  shot.description = requiredText(body.description, "镜头描述", 50_000);
+  shot.sourceLines = optionalText(body.sourceLines, "对应原文", 20_000);
+  saveProject(p);
+  return p;
 }
 
 /** 文件/目录名净化：只留字母数字下划线点连字符与 CJK（%# 等会打断 /files/ URL 链路） */

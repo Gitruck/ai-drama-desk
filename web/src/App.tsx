@@ -654,18 +654,18 @@ function ProjectBoard({
 
       <section className="page-section character-section">
         <div className="section-heading">
-          <div><h2>角色资产</h2><p>源图两个参考集共享；喂法随当前 Keyframe 引擎自动切换。</p></div>
+          <div><h2>角色资产</h2><p>源图两个参考集共享；角色文字可修改并用于后续生成。</p></div>
           <span className="section-count" title={strategyBadgeText(refPolicyFor(kfProvider, refPolicies as any))}>{p.doc.characters.length} 个角色</span>
         </div>
-        <CharacterPanel p={p} kfProvider={kfProvider} refPolicies={refPolicies as any} onChanged={refresh} />
+        <CharacterPanel p={p} kfProvider={kfProvider} refPolicies={refPolicies as any} editingEnabled={active.length === 0} onChanged={refresh} />
       </section>
 
       <section className="page-section shots-section">
         <div className="section-heading sticky-section-heading">
-          <div><h2>镜头工作区</h2><p>按镜审阅文本、Keyframe 和视频；橙色描边表示当前选用候选。</p></div>
+          <div><h2>镜头工作区</h2><p>镜头文字可修改；保存后重 roll 才会使用新版内容，已出的候选保持不变。</p></div>
           <span className="section-count">{p.shotsView.length} 镜</span>
         </div>
-        {p.shotsView.map((shot: any) => <ShotCard key={shot.index} p={p} shot={shot} kfProvider={kfProvider} vidProvider={vidProvider} jobs={jobs} onChanged={refresh} />)}
+        {p.shotsView.map((shot: any) => <ShotCard key={shot.index} p={p} shot={shot} kfProvider={kfProvider} vidProvider={vidProvider} jobs={jobs} editingEnabled={active.length === 0} onChanged={refresh} />)}
       </section>
 
       {manifest && <ManifestView manifest={manifest} pid={id} onClose={() => setManifest(null)} />}
@@ -778,6 +778,7 @@ function ShotCard({
   kfProvider,
   vidProvider,
   jobs,
+  editingEnabled,
   onChanged,
 }: {
   p: any;
@@ -785,9 +786,22 @@ function ShotCard({
   kfProvider: string;
   vidProvider: string;
   jobs: any[];
+  editingEnabled: boolean;
   onChanged: () => void | Promise<void>;
 }) {
   const [preview, setPreview] = useState<{ kind: "keyframe" | "video"; idx: number } | null>(null);
+  const [editingText, setEditingText] = useState(false);
+  const [textError, setTextError] = useState("");
+  const [draft, setDraft] = useState({
+    title: shot.title ?? "",
+    durationSec: shot.durationSec == null ? "" : String(shot.durationSec),
+    segment: shot.segment ?? "",
+    scene: shot.scene ?? "",
+    cast: Array.isArray(shot.cast) ? shot.cast.join("、") : "",
+    stylePrefix: shot.stylePrefix ?? "",
+    description: shot.description ?? "",
+    sourceLines: shot.sourceLines ?? "",
+  });
   // 服务端算好的悬空标记：选中项已不在候选里（产物被删/清盘/换机器），只提示不代改
   const dangling: { keyframe?: string; video?: string } = shot.danglingChoices ?? {};
   const keyframeActive = jobs.some((job) => job.shotIndex === shot.index && job.kind === "keyframe" && (job.status === "queued" || job.status === "running"));
@@ -795,6 +809,46 @@ function ShotCard({
   const gen = async (kind: "keyframe" | "video", provider: string) => {
     await api.generate(p.id, shot.index, kind, provider);
     await onChanged();
+  };
+  const openTextEditor = () => {
+    setDraft({
+      title: shot.title ?? "",
+      durationSec: shot.durationSec == null ? "" : String(shot.durationSec),
+      segment: shot.segment ?? "",
+      scene: shot.scene ?? "",
+      cast: Array.isArray(shot.cast) ? shot.cast.join("、") : "",
+      stylePrefix: shot.stylePrefix ?? "",
+      description: shot.description ?? "",
+      sourceLines: shot.sourceLines ?? "",
+    });
+    setTextError("");
+    setEditingText(true);
+  };
+  const setDraftField = (field: keyof typeof draft, value: string) => setDraft((current) => ({ ...current, [field]: value }));
+  const saveText = async () => {
+    const duration = draft.durationSec.trim() === "" ? null : Number(draft.durationSec);
+    if (!draft.title.trim()) return setTextError("镜头标题不能为空");
+    if (!draft.description.trim()) return setTextError("镜头描述不能为空");
+    if (duration !== null && (!Number.isFinite(duration) || duration <= 0 || duration > 3600)) {
+      return setTextError("建议时长请填写 0–3600 秒之间的数字，或留空");
+    }
+    setTextError("");
+    try {
+      await api.updateShotText(p.id, shot.index, {
+        title: draft.title,
+        durationSec: duration,
+        segment: draft.segment,
+        scene: draft.scene,
+        cast: draft.cast.split(/[\n,，、]+/).map((item: string) => item.trim()).filter(Boolean),
+        stylePrefix: draft.stylePrefix,
+        description: draft.description,
+        sourceLines: draft.sourceLines,
+      });
+      await onChanged();
+      setEditingText(false);
+    } catch (error) {
+      setTextError(error instanceof Error ? error.message : String(error));
+    }
   };
   const remove = async (kind: "keyframe" | "video", file: string) => {
     try {
@@ -813,16 +867,46 @@ function ShotCard({
     }
   };
   return (
-    <div className="shot-card">
+    <div className={`shot-card ${editingText ? "editing-text" : ""}`}>
       <div className="shot-text">
         <div className="shot-title">
           <span className="shot-index">{shot.key}</span>
-          <div><b>{shot.title}</b><span>≈{shot.durationSec ?? "?"}s · {shot.scene ?? ""}</span></div>
+          <div className="shot-title-copy"><b>{shot.title}</b><span>≈{shot.durationSec ?? "?"}s · {shot.scene ?? ""}</span></div>
+          <button
+            type="button"
+            className="mini shot-edit-button"
+            disabled={!editingEnabled || editingText}
+            title={editingEnabled ? "修改这张镜头卡的文字" : "有生成任务在途，完成或中止后再修改"}
+            onClick={openTextEditor}
+          >✎ 编辑</button>
         </div>
-        {Array.isArray(shot.cast) && shot.cast.length > 0 && <div className="shot-cast">{shot.cast.map((name: string) => <span key={name}>{name}</span>)}</div>}
-        {shot.stylePrefix && <div className="shot-prefix">〔{shot.stylePrefix}〕</div>}
-        <div className="shot-desc">{shot.description}</div>
-        {shot.sourceLines && <div className="dim small">对应原文：{shot.sourceLines}</div>}
+        {editingText ? (
+          <div className="story-text-editor shot-text-editor">
+            <div className="story-editor-grid compact-fields">
+              <label>标题<input value={draft.title} onChange={(event) => setDraftField("title", event.target.value)} autoFocus /></label>
+              <label>建议时长（秒）<input type="number" min="0.1" max="3600" step="0.1" value={draft.durationSec} onChange={(event) => setDraftField("durationSec", event.target.value)} placeholder="可留空" /></label>
+              <label>场景<input value={draft.scene} onChange={(event) => setDraftField("scene", event.target.value)} /></label>
+              <label>蒙太奇段名<input value={draft.segment} onChange={(event) => setDraftField("segment", event.target.value)} placeholder="可留空" /></label>
+            </div>
+            <label>出场角色<span>用逗号或顿号分隔</span><input value={draft.cast} onChange={(event) => setDraftField("cast", event.target.value)} /></label>
+            <label>本镜视觉基调<textarea className="short" value={draft.stylePrefix} onChange={(event) => setDraftField("stylePrefix", event.target.value)} /></label>
+            <label>镜头描述<textarea value={draft.description} onChange={(event) => setDraftField("description", event.target.value)} /></label>
+            <label>对应原文<textarea className="short" value={draft.sourceLines} onChange={(event) => setDraftField("sourceLines", event.target.value)} /></label>
+            {textError && <div className="inline-error">{textError}</div>}
+            <div className="story-editor-actions">
+              <AsyncButton className="mini primary" disabled={!editingEnabled} pendingText="保存中…" onClick={saveText}>保存文字</AsyncButton>
+              <button className="mini" type="button" onClick={() => { setEditingText(false); setTextError(""); }}>取消</button>
+              <span>重新解析会按最初导入稿覆盖手工修改。</span>
+            </div>
+          </div>
+        ) : (
+          <>
+            {Array.isArray(shot.cast) && shot.cast.length > 0 && <div className="shot-cast">{shot.cast.map((name: string) => <span key={name}>{name}</span>)}</div>}
+            {shot.stylePrefix && <div className="shot-prefix">〔{shot.stylePrefix}〕</div>}
+            <div className="shot-desc">{shot.description}</div>
+            {shot.sourceLines && <div className="dim small">对应原文：{shot.sourceLines}</div>}
+          </>
+        )}
       </div>
 
       <div className="shot-media">
