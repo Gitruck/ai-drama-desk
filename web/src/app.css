@@ -174,6 +174,24 @@ button.project-id-copy.copied { border-color: #c8dacb; background: var(--ok-soft
 button.project-id-copy.copied b { color: var(--ok); }
 button.project-id-copy.error { border-color: #dfbdb2; background: var(--bad-soft); }
 button.project-id-copy.error b { color: var(--bad); }
+/* 回轨命令块：命令是要被整条复制走的，所以允许换行、不截断——
+   截断会让用户复制到半条命令，那比不给更坏。 */
+.relay-command {
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+.relay-command-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.relay-command-head b { font-size: 12px; }
+.relay-command-text {
+  display: block;
+  font: 500 11px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--ink);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
 .page-actions, .page-actions-row { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; flex-wrap: wrap; }
 .surface-card, .style-card, .lora-form-card, .lora-jobs-card {
   border: 1px solid var(--line);

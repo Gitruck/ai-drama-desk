@@ -73,12 +73,33 @@ function copyWithoutAudio(src: string, dst: string): boolean {
   return false;
 }
 
+/**
+ * AI 回轨导出包目录。**本函数是这个落点的唯一真相源**——API 层、落脚点消费方与任何
+ * 其他读者一律从这里取，MUST NOT 各自 `join(projectDir(id), "exports", "aidrama")`
+ * 再拼一份：复制出去的那份不会跟着这里改，迟早漂成两个答案。
+ */
+export function aiDramaExportDir(projectId: string) {
+  return join(projectDir(projectId), "exports", "aidrama");
+}
+
+/**
+ * 导出包**真实存在**时给出它的目录，否则给 undefined（不是空串、不是拼出来的路径）。
+ *
+ * 判据是 `manifest.json` 而不是目录本身：`exportProject` 一上来就 `mkdirSync(outDir)`，
+ * 所以「导到一半失败」也会留下一个空目录。拿目录存在性判，会把「导了一半」当成「已导出」，
+ * 下游据此去回轨只会在更深的地方炸。
+ */
+export function aiDramaExportDirIfPresent(projectId: string): string | undefined {
+  const dir = aiDramaExportDir(projectId);
+  return existsSync(join(dir, "manifest.json")) ? dir : undefined;
+}
+
 export function exportProject(p: Project, opts: { keepAudio?: boolean } = {}): ExportManifest {
   const keepAudio = opts.keepAudio ?? false;
   // beatId 可能来自手工 shots.json / UI 补齐，进文件名前必须消毒
   const beat = (p.doc.beatId || "b00").toLowerCase().replace(/[^a-z0-9_-]/g, "") || "b00";
   const slug = p.slug.toLowerCase().replace(/[^a-z0-9_-]/g, "") || p.id;
-  const outDir = join(projectDir(p.id), "exports", "aidrama");
+  const outDir = aiDramaExportDir(p.id);
   mkdirSync(outDir, { recursive: true });
 
   const items: ExportItem[] = [];

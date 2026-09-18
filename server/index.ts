@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { DATA_DIR, ROOT, ensureDirs, loadConfig, mergeConfigPatch, publicConfig, saveConfig } from "./lib/config.ts";
+import { DATA_DIR, PROJECTS_DIR, ROOT, ensureDirs, loadConfig, mergeConfigPatch, publicConfig, saveConfig } from "./lib/config.ts";
 import { parseStoryboard, validateDoc } from "./lib/parse.ts";
 import {
   characterDir,
@@ -15,6 +15,7 @@ import {
   listShotOutputs,
   ProjectError,
   projectDeletionPreview,
+  projectDir,
   reparseProject,
   sanitizeName,
   saveProject,
@@ -36,7 +37,9 @@ import {
   styleUsage,
 } from "./lib/styles.ts";
 import { cancelJob, cancelProjectJobs, dismissJobs, enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
-import { exportProject, type ExportManifest } from "./lib/export.ts";
+import { aiDramaExportDirIfPresent, exportProject, type ExportManifest } from "./lib/export.ts";
+import { pointerPath, registerInstance } from "./lib/desk-pointer.ts";
+import { revealInFileManager } from "./lib/reveal.ts";
 import { diagnoseComfy } from "./lib/providers/comfyui.ts";
 import { deleteMediaOutput, MediaDeleteError, previewMediaDelete } from "./lib/media.ts";
 import {
@@ -157,6 +160,22 @@ function serveFile(absPath: string): Response {
   return new Response(file, { headers: { "Content-Type": MIME[extname(p).toLowerCase()] ?? "application/octet-stream" } });
 }
 
+/** 构建标识：健康检查与落脚点登记共用同一个值，别各读各的 env。 */
+const BUILD_ID = process.env.GITRUCK_DESK_BUILD_ID?.trim() || "development";
+
+/**
+ * 项目对象补上可交接的绝对路径：`dir` 恒有，`exportDir` **只在导出包真实存在时才有**。
+ *
+ * 缺席表达「尚未导出」，而不是 null、更不是拼一个不存在的路径——把不存在的路径递到
+ * 下游手里，迟早有人不看存在性标志就直接用。缺席则在类型上不可误读。
+ *
+ * 路径本身取自 `export.ts` 的唯一真相源，这里只调不拼。
+ */
+function withPaths<T extends { id: string }>(p: T) {
+  const exportDir = aiDramaExportDirIfPresent(p.id);
+  return { ...p, dir: projectDir(p.id), ...(exportDir ? { exportDir } : {}) };
+}
+
 /** 项目完整视图：project.json + 各镜磁盘产物扫描 */
 function projectView(id: string) {
   const p = getProject(id);
@@ -181,7 +200,7 @@ function projectView(id: string) {
     multiRef: characterMultiReferenceView(p, c.name),
   }));
   const totalCost = Math.round(p.costLedger.reduce((a, c) => a + c.cost, 0) * 100) / 100;
-  return { ...p, doc: { ...p.doc, characters }, shotsView: shots, totalCost };
+  return withPaths({ ...p, doc: { ...p.doc, characters }, shotsView: shots, totalCost });
 }
 
 /** 该项目在途（排队中/运行中）的任务 id；改 doc、切画风、删项目前都要先看它。 */
@@ -256,7 +275,7 @@ export function createRequestHandler() {
         // 各出图/出片档位是否就绪，前端据此禁用没配好的选项
         return json({
           ok: true,
-          buildId: process.env.GITRUCK_DESK_BUILD_ID?.trim() || "development",
+          buildId: BUILD_ID,
           comfy,
           localInferenceEnabled: c.localInferenceEnabled,
           localEngine: localEngineStatus(c.localModelsDir),
@@ -386,7 +405,18 @@ export function createRequestHandler() {
         return json({ text: redactOperationalText(text.slice(-tail)) });
       }
 
-      if (path === "/api/projects" && req.method === "GET") return json(listProjects());
+      // 数据根的读面：界面要就地标明「你的东西在哪」。
+      // 打包版常见形态是应用装在一个盘、数据在用户应用数据目录，用户无从推断。
+      if (path === "/api/paths" && req.method === "GET") {
+        return json({ dataRoot: DATA_DIR, projectsDir: PROJECTS_DIR, pointerPath: pointerPath(), appRoot: ROOT });
+      }
+      // 调起系统文件管理器。**只开服务端自己算出的数据根**，不接受请求体里的任意路径。
+      if (path === "/api/paths/reveal" && req.method === "POST") {
+        const r = revealInFileManager(DATA_DIR);
+        return r.ok ? json({ ok: true, dataRoot: DATA_DIR }) : err(`打不开数据目录：${r.reason}`, 501, "REVEAL_UNAVAILABLE");
+      }
+
+      if (path === "/api/projects" && req.method === "GET") return json(listProjects().map(withPaths));
       if (path === "/api/projects" && req.method === "POST") {
         const body = await req.json();
         let doc = body.doc;
@@ -604,7 +634,9 @@ export function createRequestHandler() {
         }
         const manifest = exportProject(p, { keepAudio: loadConfig().exportKeepAudio });
         if (idempotencyKey) rememberExport(p.id, idempotencyKey, manifest);
-        return json(manifest);
+        // 带上导出包的真实落点：界面要据此给一条可直接执行的回轨命令。
+        // 不能让前端拿 pid 自己拼——数据根可被覆盖（打包版就在别的盘），拼出来的路径是错的。
+        return json({ ...manifest, exportDir: aiDramaExportDirIfPresent(p.id) });
       }
 
       if (path === "/api/jobs") {
@@ -675,4 +707,13 @@ export function createRequestHandler() {
 if (import.meta.main) {
   const server = Bun.serve({ port: cfg.port, hostname: "127.0.0.1", idleTimeout: 120, fetch: createRequestHandler() });
   console.log(`gitruck-ai-drama-desk 已启动: http://127.0.0.1:${server.port}`);
+  // 落脚点登记：让下游在服务没起时也能按项目 id 确定性解析到导出包，而不必扫盘。
+  // 写失败不阻断启动，但要说清楚——否则下游只剩 API 一条路时，用户不知道为什么。
+  // 取实际监听端口（`server.port` 才是真相；`cfg.port` 只是请求值）；类型上可空时回落配置值
+  const pointer = registerInstance({ port: server.port ?? cfg.port, buildId: BUILD_ID });
+  if (pointer) {
+    console.log(`落脚点已登记: ${pointerPath()}（本机共 ${pointer.instances.length} 个部署在册）`);
+  } else {
+    console.warn(`落脚点写入失败: ${pointerPath()} —— 服务照常运行，但服务未启动时下游将无法按项目 id 解析导出包`);
+  }
 }

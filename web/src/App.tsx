@@ -171,7 +171,12 @@ async function writeClipboard(value: string) {
   if (!copied) throw new Error("浏览器未允许复制");
 }
 
-function ProjectIdCopy({ id }: { id: string }) {
+/**
+ * 复制交互（状态机 + 就地反馈 + 防连点）。
+ * 从 ProjectIdCopy 里抽出来，供「复制回轨命令」「复制数据目录」复用——
+ * 既有条款要求「键盘可达 + 就地反馈」，复用比各写一份更不容易漂。
+ */
+function useCopyAction(value: string) {
   const [status, setStatus] = useState<"idle" | "copying" | "copied" | "error">("idle");
   const resetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const copyLock = useRef(false);
@@ -181,7 +186,7 @@ function ProjectIdCopy({ id }: { id: string }) {
     return () => {
       if (resetTimer.current) clearTimeout(resetTimer.current);
     };
-  }, [id]);
+  }, [value]);
 
   const copy = async () => {
     if (copyLock.current) return;
@@ -189,7 +194,7 @@ function ProjectIdCopy({ id }: { id: string }) {
     if (resetTimer.current) clearTimeout(resetTimer.current);
     setStatus("copying");
     try {
-      await writeClipboard(id);
+      await writeClipboard(value);
       setStatus("copied");
     } catch {
       setStatus("error");
@@ -198,6 +203,13 @@ function ProjectIdCopy({ id }: { id: string }) {
     }
     resetTimer.current = setTimeout(() => setStatus("idle"), 1800);
   };
+
+  const label = status === "copying" ? "复制中…" : status === "copied" ? "已复制" : status === "error" ? "重试" : "复制";
+  return { status, copy, label };
+}
+
+function ProjectIdCopy({ id }: { id: string }) {
+  const { status, copy, label } = useCopyAction(id);
 
   return (
     <button
@@ -211,8 +223,51 @@ function ProjectIdCopy({ id }: { id: string }) {
     >
       <span>项目 ID</span>
       <code>{id}</code>
-      <b aria-live="polite">{status === "copying" ? "复制中…" : status === "copied" ? "已复制" : status === "error" ? "重试" : "复制"}</b>
+      <b aria-live="polite">{label}</b>
     </button>
+  );
+}
+
+/**
+ * 回轨命令：导出完成后给一条能直接跑的命令。
+ *
+ * 两条硬约束（spec: add-handoff-shortcuts-in-ui）：
+ * 1. `--package` 的路径取自**本次导出的真实落点**（服务端回的 exportDir），不是拿 pid 拼的模板——
+ *    数据根可被覆盖，打包版就在别的盘，拼出来的是错的。
+ * 2. `--project` 是口播工程目录，**工作台无从知晓**，所以留显式占位。占位用**引号包裹的中文**
+ *    而不是 `<...>`：实测尖括号粘进 bash，占位名恰好存在时 `>` 会真的创建出一个名为
+ *    `--package` 的文件（副作用，不是报错）；不存在时报的又是指向错误方向的重定向失败；
+ *    PowerShell 里 `<` 更是保留字符直接解析错误。引号包裹的中文串在任何 shell 里都只是一个
+ *    普通参数，命令干净地失败、且错误信息里就带着这句提示。
+ */
+const RELAY_PROJECT_PLACEHOLDER = "把这里替换成你的口播工程目录";
+
+function relayCommand(exportDir: string) {
+  return `gtrk ai-drama lay --project "${RELAY_PROJECT_PLACEHOLDER}" --package "${exportDir}"`;
+}
+
+function RelayCommandBlock({ exportDir }: { exportDir: string }) {
+  const cmd = relayCommand(exportDir);
+  const { status, copy, label } = useCopyAction(cmd);
+  return (
+    <div className="relay-command">
+      <div className="relay-command-head">
+        <b>回轨命令</b>
+        <span className="dim small">把它粘进终端，只需替换 <code>--project</code> 那一段</span>
+        <button
+          type="button"
+          className={`project-id-copy ${status}`}
+          title="复制回轨命令，粘进终端即可把本次导出的片段回填进口播工程"
+          aria-label="复制回轨命令"
+          aria-busy={status === "copying" || undefined}
+          disabled={status === "copying"}
+          onClick={copy}
+        >
+          <b aria-live="polite">{label}</b>
+        </button>
+      </div>
+      <code className="relay-command-text">{cmd}</code>
+    </div>
   );
 }
 
@@ -1008,9 +1063,13 @@ function ManifestView({ manifest, pid, onClose }: { manifest: any; pid: string; 
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>导出完成 · beat {manifest.beatId}</h2>
         <p className="dim">
-          目录：data/projects/{pid}/exports/aidrama/ ｜ 建议 {manifest.totalSuggestedSec}s / 实测{" "}
+          {/* 落点用服务端回的真实绝对路径。原来这里写死 `data/projects/<pid>/exports/aidrama/`，
+              那是相对仓库根的形态——打包版数据在用户应用数据目录，那串路径对不上任何真实位置。 */}
+          目录：{manifest.exportDir ?? `（本次导出未回落点，项目 ${pid}）`} ｜ 建议 {manifest.totalSuggestedSec}s / 实测{" "}
           {manifest.totalMeasuredSec}s ｜ 成本 ¥{manifest.totalCost}
         </p>
+        {/* 未导出成功（落点缺席）时不给命令——一条指向不存在位置的命令比没有命令更坏 */}
+        {manifest.exportDir && <RelayCommandBlock exportDir={manifest.exportDir} />}
         {manifest.items.some((i: any) => i.fallbackFrom) && (
           <div className="warn">
             <b>以下镜的选中产物已丢失，本次回落到了其余候选</b>——不是你挑的那条，可回工作台重挑或重出：
@@ -1399,6 +1458,75 @@ function LoraJobDetail({ job, log, styles, publishStyle, setPublishStyle, onChan
   </div>;
 }
 
+/**
+ * 数据目录面板：治「应用装在一个盘、数据在另一个地方」这个认知落差。
+ *
+ * 真机 2026-09-18：用户报的是安装位置 `F:\file\Gitruck AI Drama Desk`，
+ * 而数据实际在 `C:\Users\<user>\AppData\Local\Gitruck\AI Drama Desk\data`——
+ * 界面从没告诉过他，所以他不是记错了。
+ *
+ * 调不起文件管理器时**退化为「显示路径 + 复制」**，不留一个点了没反应的按钮。
+ */
+function DataDirPanel() {
+  const [paths, setPaths] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const copy = useCopyAction(paths?.dataRoot ?? "");
+
+  useEffect(() => {
+    api.paths().then(setPaths).catch((e: any) => setErr(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  const reveal = async () => {
+    setErr(null);
+    try {
+      await api.revealDataDir();
+    } catch (e: any) {
+      // 501 = 本平台调不起文件管理器。不是故障，是退化路径：把路径摆出来让用户自己去。
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const differs = paths?.appRoot && paths?.dataRoot && !String(paths.dataRoot).startsWith(String(paths.appRoot));
+
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <div>
+          <h2>数据目录</h2>
+          <p>项目、产物、画风与配置都在这里；导出的回轨包也在它下面。</p>
+        </div>
+        <div className="form-actions">
+          <AsyncButton onClick={reveal} pendingText="打开中…">打开数据目录</AsyncButton>
+          <button
+            type="button"
+            className={`project-id-copy ${copy.status}`}
+            aria-label="复制数据目录路径"
+            disabled={copy.status === "copying" || !paths?.dataRoot}
+            onClick={copy.copy}
+          >
+            <b aria-live="polite">{copy.label}</b>
+          </button>
+        </div>
+      </div>
+      {paths ? (
+        <div className="dim small">
+          <div>数据根：<code>{paths.dataRoot}</code></div>
+          <div>应用位置：<code>{paths.appRoot}</code></div>
+          <div>落脚点：<code>{paths.pointerPath}</code>（下游在服务没起时据它定位项目）</div>
+          {differs && (
+            <div className="warn" style={{ marginTop: 8 }}>
+              <b>数据不在应用安装目录里</b>——找文件请认上面的「数据根」，不是安装位置。
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="empty-state compact">读取中…</div>
+      )}
+      {err && <div className="warn bad">{err}</div>}
+    </section>
+  );
+}
+
 function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
   const [text, setText] = useState("");
   const [config, setConfig] = useState<any>(null);
@@ -1483,6 +1611,7 @@ function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
   return (
     <div className="panel settings-page">
       <PageHeader eyebrow="系统" title="设置与诊断" description="默认只使用云端模型；需要本地推理时，可安装托管组件，也可连接你已经启动的 ComfyUI。" />
+      <DataDirPanel />
       <LocalEnginePanel engine={engine} busy={engineBusy} error={engineError} onAction={engineAction} onRefresh={refreshEngine} />
       {diagnosticError && <div className="warn bad">{diagnosticError}</div>}
       <section className="page-section">

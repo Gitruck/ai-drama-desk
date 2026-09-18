@@ -455,6 +455,17 @@ Web UI 与 CLI 都是同一 HTTP API（`http://127.0.0.1:7799/api/v1`）的客�
 
 Agent 的正确顺序是先请求 `GET /health`，再请求 `GET /projects/<id>` 校验项目，成功后直接走 HTTP API；不应为了接管已有项目搜索仓库。只有在服务尚未启动、需要修改仓库，或只能从源码运行 CLI 时，才需要提供明确的仓库路径。非默认服务地址通过 `GITRUCK_AI_DRAMA_DESK_URL` 指定；已安装独立 CLI 时也可直接使用，无需仓库 cwd。
 
+### 把导出包交给回轨工具
+
+AI 片段导出后要交给 `gtrk ai-drama lay` 回填，而那条命令吃的是文件系统路径。**不要去磁盘上找**，按这两条确定性路径解析：
+
+- **服务在跑** → `GET /projects/<id>` 的响应里带 `dir`（项目目录）与 `exportDir`（导出包目录）。`exportDir` **只在导出包真实存在时才有**，字段缺席就是「这个项目还没导出」。
+- **服务没起** → 工作台启动时会把自身登记进 `~/.gitruck/ai-drama-desk.json` 的 `instances[]`（每条含 `dataRoot` / `projectsDir` / `port` / `buildId`），据它可离线解析出 `<projectsDir>/<id>/exports/aidrama`。
+
+> ⚠️ **数据根不一定在安装目录里。** 默认是 `<仓库>/data`，但可被 `GITRUCK_DESK_DATA_DIR` 覆盖——打包版常见形态是应用装在一个盘、数据放在用户应用数据目录。想知道当刻数据根，看项目查询返回的 `dir`，或落脚点里的 `dataRoot`。
+>
+> 同一台机器上源码部署与打包部署可以并存，各有独立数据根，`instances[]` 会各占一条——**按项目 ID 在各条里找不到时，多半是它在另一个部署里**，而不是项目丢了。
+
 ### 安装工作台 skill
 
 ```bash
