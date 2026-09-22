@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { DATA_DIR, PROJECTS_DIR, ROOT, ensureDirs, loadConfig, mergeConfigPatch, publicConfig, saveConfig } from "./lib/config.ts";
+import { DATA_DIR, DEFAULT_PROJECTS_DIR, ROOT, ensureDirs, loadConfig, mergeConfigPatch, projectsRoot, projectsRootIsDefault, publicConfig, saveConfig } from "./lib/config.ts";
 import { parseStoryboard, validateDoc } from "./lib/parse.ts";
 import {
   characterDir,
@@ -38,7 +38,8 @@ import {
 } from "./lib/styles.ts";
 import { cancelJob, cancelProjectJobs, dismissJobs, enqueue, enqueueAuto, enqueueCharRef, listJobs } from "./lib/queue.ts";
 import { aiDramaExportDirIfPresent, exportProject, type ExportManifest } from "./lib/export.ts";
-import { pointerPath, registerInstance } from "./lib/desk-pointer.ts";
+import { listInstances, pointerPath, registerInstance } from "./lib/desk-pointer.ts";
+import { activeJobsRejection, checkRootCandidate, countProjectsIn, migrateProjects } from "./lib/workspace-root.ts";
 import { revealInFileManager } from "./lib/reveal.ts";
 import { diagnoseComfy } from "./lib/providers/comfyui.ts";
 import { deleteMediaOutput, MediaDeleteError, previewMediaDelete } from "./lib/media.ts";
@@ -162,6 +163,21 @@ function serveFile(absPath: string): Response {
 
 /** 构建标识：健康检查与落脚点登记共用同一个值，别各读各的 env。 */
 const BUILD_ID = process.env.GITRUCK_DESK_BUILD_ID?.trim() || "development";
+/**
+ * 本进程实际监听的端口。启动时回填——`cfg.port` 只是**请求值**，
+ * 端口被占时 Bun 会实际绑到别的号，拿请求值去登记落脚点等于登记一个连不上的地址。
+ */
+let boundPort = 0;
+
+/** 某目录是否已被**别的**实例用作产物根（同一 dataRoot 的是自己，不算冲突）。 */
+function occupiedByOtherInstance(dir: string): string | null {
+  const target = resolve(dir);
+  for (const inst of listInstances()) {
+    if (resolve(inst.dataRoot) === resolve(DATA_DIR)) continue;
+    if (resolve(inst.projectsDir) === target) return `端口 ${inst.port} / 数据根 ${inst.dataRoot}`;
+  }
+  return null;
+}
 
 /**
  * 项目对象补上可交接的绝对路径：`dir` 恒有，`exportDir` **只在导出包真实存在时才有**。
@@ -408,8 +424,65 @@ export function createRequestHandler() {
       // 数据根的读面：界面要就地标明「你的东西在哪」。
       // 打包版常见形态是应用装在一个盘、数据在用户应用数据目录，用户无从推断。
       if (path === "/api/paths" && req.method === "GET") {
-        return json({ dataRoot: DATA_DIR, projectsDir: PROJECTS_DIR, pointerPath: pointerPath(), appRoot: ROOT });
+        return json({
+          dataRoot: DATA_DIR,
+          projectsDir: projectsRoot(),
+          pointerPath: pointerPath(),
+          appRoot: ROOT,
+          // add-configurable-workspace-root：界面要分得清「这是默认位置」还是「你改过」
+          projectsRootIsDefault: projectsRootIsDefault(),
+          defaultProjectsDir: DEFAULT_PROJECTS_DIR,
+        });
       }
+      // 产物根的校验（干跑）：界面填完路径先问一次，**零写盘副作用之外只建目标目录**。
+      // 分成「先校验、再更改」两步，是为了让界面能在用户按下确认之前就说清
+      //「这个位置行不行、里面已经有几个项目」。
+      if (path === "/api/paths/projects-root/check" && req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { dir?: unknown };
+        const r = checkRootCandidate(String(body.dir ?? ""), { occupiedBy: occupiedByOtherInstance });
+        return json(r);
+      }
+
+      // 更改产物根（add-configurable-workspace-root）。
+      // `migrate` 由界面按 0.1 的拍板「改完问一句」传进来；不传 = 只影响新项目。
+      if (path === "/api/paths/projects-root" && req.method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { dir?: unknown; migrate?: unknown };
+        // ⚠️ 运行中 MUST 拒（0.2 拍板：直接拒绝，不做「待执行的设置变更」状态）——
+        //    在任务写盘的同时把根挪走，写到一半的项目会分裂在两个根上。
+        const rejection = activeJobsRejection(listJobs());
+        if (rejection) return err(rejection, 409, "JOBS_ACTIVE");
+
+        const raw = String(body.dir ?? "").trim();
+        const cfg = loadConfig();
+        const oldRoot = projectsRoot();
+
+        // 清空 ⇒ 退回默认（0.4 拍板：空值 = 沿用 <dataRoot>/projects，用户随时可回退）
+        if (!raw) {
+          saveConfig({ ...cfg, projectsRoot: "" });
+          const migration = body.migrate === true ? migrateProjects(oldRoot, projectsRoot()) : null;
+          registerInstance({ port: boundPort || cfg.port, buildId: BUILD_ID });
+          return json({ ok: true, projectsDir: projectsRoot(), projectsRootIsDefault: true, oldRoot, migration });
+        }
+
+        const check = checkRootCandidate(raw, { occupiedBy: occupiedByOtherInstance });
+        if (!check.ok) return err(check.reason ?? "目标目录不可用", 400, "BAD_ROOT");
+
+        saveConfig({ ...cfg, projectsRoot: check.resolved });
+        const migration = body.migrate === true ? migrateProjects(oldRoot, check.resolved) : null;
+        // 落脚点登记当刻真实值；旧根那条按既有 lastSeenAt 规则留着——
+        // 该文件本就是数组、本就为「多处并存」设计，下游据此能指出「你要的在另一处」。
+        registerInstance({ port: boundPort || cfg.port, buildId: BUILD_ID });
+        return json({
+          ok: true,
+          projectsDir: projectsRoot(),
+          projectsRootIsDefault: projectsRootIsDefault(),
+          oldRoot,
+          migration,
+          // 用户选「不搬」时 MUST 明确告知旧位置还剩多少（spec 的 Scenario）
+          remainingAtOld: migration ? migration.remainingAtOld : countProjectsIn(oldRoot),
+        });
+      }
+
       // 调起系统文件管理器。**只开服务端自己算出的数据根**，不接受请求体里的任意路径。
       if (path === "/api/paths/reveal" && req.method === "POST") {
         const r = revealInFileManager(DATA_DIR);
@@ -710,7 +783,8 @@ if (import.meta.main) {
   // 落脚点登记：让下游在服务没起时也能按项目 id 确定性解析到导出包，而不必扫盘。
   // 写失败不阻断启动，但要说清楚——否则下游只剩 API 一条路时，用户不知道为什么。
   // 取实际监听端口（`server.port` 才是真相；`cfg.port` 只是请求值）；类型上可空时回落配置值
-  const pointer = registerInstance({ port: server.port ?? cfg.port, buildId: BUILD_ID });
+  boundPort = server.port ?? cfg.port;
+  const pointer = registerInstance({ port: boundPort, buildId: BUILD_ID });
   if (pointer) {
     console.log(`落脚点已登记: ${pointerPath()}（本机共 ${pointer.instances.length} 个部署在册）`);
   } else {

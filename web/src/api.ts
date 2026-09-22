@@ -31,6 +31,10 @@ export const api = {
   stopLocalEngine: () => req("/api/v1/local-engine/stop", { method: "POST" }),
   paths: () => req("/api/v1/paths"),
   revealDataDir: () => req("/api/v1/paths/reveal", { method: "POST" }),
+  // 产物根：校验是干跑（界面能在用户按确认之前就说清行不行），更改才写配置
+  checkProjectsRoot: (dir: string) => req("/api/v1/paths/projects-root/check", { method: "POST", body: JSON.stringify({ dir }) }),
+  setProjectsRoot: (dir: string, migrate: boolean) =>
+    req("/api/v1/paths/projects-root", { method: "POST", body: JSON.stringify({ dir, migrate }) }),
   config: () => req("/api/v1/config"),
   saveConfig: (cfg: any) => req("/api/v1/config", { method: "PUT", body: JSON.stringify(cfg) }),
   styles: () => req("/api/v1/styles"),

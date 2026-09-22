@@ -14,7 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { DATA_DIR, PROJECTS_DIR } from "./config.ts";
+import { DATA_DIR, projectsRoot } from "./config.ts";
 
 /**
  * 落脚点文件路径。默认 `~/.gitruck/ai-drama-desk.json`（与 gtrk 生态的配置根归一，
@@ -44,6 +44,14 @@ export interface DeskInstance {
 
 export interface DeskPointer {
   instances: DeskInstance[];
+}
+
+/**
+ * 在册的实例（add-configurable-workspace-root）。
+ * 改产物根前要查「这个目录是不是已经被另一个部署占着」——两个实例共用一个根会互相覆盖项目。
+ */
+export function listInstances(): DeskInstance[] {
+  return readPointer(pointerPath()).instances;
 }
 
 function readPointer(file: string): DeskPointer {
@@ -85,7 +93,9 @@ export function registerInstance(opts: { port: number; buildId: string; now?: nu
   const now = opts.now ?? Date.now();
   const self: DeskInstance = {
     dataRoot: DATA_DIR,
-    projectsDir: PROJECTS_DIR,
+    // 登记**当刻真实值**：改根之后新旧两条会并存（本文件本就是数组、为多处并存设计），
+    // 下游据此能指出「你要的在另一处」。
+    projectsDir: projectsRoot(),
     port: opts.port,
     buildId: opts.buildId,
     lastSeenAt: now,

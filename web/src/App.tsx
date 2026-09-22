@@ -1472,8 +1472,16 @@ function DataDirPanel() {
   const [err, setErr] = useState<string | null>(null);
   const copy = useCopyAction(paths?.dataRoot ?? "");
 
+  const reloadPaths = async () => {
+    try {
+      setPaths(await api.paths());
+    } catch (e: any) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   useEffect(() => {
-    api.paths().then(setPaths).catch((e: any) => setErr(e instanceof Error ? e.message : String(e)));
+    void reloadPaths();
   }, []);
 
   const reveal = async () => {
@@ -1523,7 +1531,157 @@ function DataDirPanel() {
         <div className="empty-state compact">读取中…</div>
       )}
       {err && <div className="warn bad">{err}</div>}
+      {paths && <ProjectsRootPanel paths={paths} onChanged={reloadPaths} />}
     </section>
+  );
+}
+
+/**
+ * 产物根的更改入口（change: add-configurable-workspace-root）。
+ *
+ * 就地加在数据目录面板里、**不另开设置页**：用户找路径的心智入口已经在这了。
+ *
+ * 为什么要有这个：实测一条片子 351 MB，其中 **97% 是 projects/**，
+ * 而它默认落在系统盘的用户目录。做几条片子就是好几个 GB 压在 C 盘。
+ *
+ * 目录选择走**手填 + 校验回显**：浏览器没有「选目录并拿到绝对路径」的能力，
+ * 而打包壳也未必有。**MUST NOT 留一个点了没反应的按钮**（沿用前一件确立的降级口径）——
+ * 所以这里不放「浏览…」，直接给输入框，按「检查」当场回显行不行。
+ */
+function ProjectsRootPanel({ paths, onChanged }: { paths: any; onChanged: () => Promise<void> | void }) {
+  const [open, setOpen] = useState(false);
+  const [dir, setDir] = useState("");
+  const [check, setCheck] = useState<any>(null);
+  const [migrate, setMigrate] = useState(true);
+  const [result, setResult] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const isDefault = paths.projectsRootIsDefault !== false;
+
+  const doCheck = async () => {
+    setErr(null);
+    setResult(null);
+    try {
+      setCheck(await api.checkProjectsRoot(dir));
+    } catch (e: any) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const doApply = async () => {
+    setErr(null);
+    try {
+      const r = await api.setProjectsRoot(dir, migrate);
+      setResult(r);
+      setCheck(null);
+      await onChanged();
+    } catch (e: any) {
+      // 409 = 有任务在途；400 = 目标不可用。两种都已带着原因回来，原样摆出来
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const doReset = async () => {
+    setErr(null);
+    try {
+      const r = await api.setProjectsRoot("", false);
+      setResult(r);
+      setCheck(null);
+      setDir("");
+      await onChanged();
+    } catch (e: any) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="dim small" style={{ marginTop: 12, borderTop: "1px solid var(--line, #2a2a2a)", paddingTop: 12 }}>
+      <div>
+        产物位置：<code>{paths.projectsDir}</code>
+        {isDefault ? <span>（默认位置）</span> : <span>（已自定义）</span>}
+      </div>
+      <p style={{ marginTop: 4 }}>
+        关键帧、候选、视频与导出包都在这里，是占空间的大头（实测一条片子约 341&nbsp;MB）。
+        默认在系统盘的用户目录，可以改到素材盘。
+      </p>
+      <div className="form-actions" style={{ marginTop: 8 }}>
+        <button type="button" onClick={() => setOpen((v) => !v)}>{open ? "收起" : "更改位置"}</button>
+        {!isDefault && <AsyncButton onClick={doReset} pendingText="恢复中…">恢复默认</AsyncButton>}
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          <label style={{ display: "block", marginBottom: 6 }}>
+            新位置（绝对路径）
+            <input
+              type="text"
+              value={dir}
+              placeholder="D:\gitruck-projects"
+              onChange={(e) => {
+                setDir(e.target.value);
+                setCheck(null);
+              }}
+              style={{ width: "100%", marginTop: 4 }}
+            />
+          </label>
+          <div className="form-actions">
+            <AsyncButton onClick={doCheck} pendingText="检查中…" disabled={!dir.trim()}>检查这个位置</AsyncButton>
+          </div>
+
+          {check && !check.ok && <div className="warn bad" style={{ marginTop: 8 }}>{check.reason}</div>}
+          {check?.ok && (
+            <div style={{ marginTop: 8 }}>
+              <div>
+                可以用：<code>{check.resolved}</code>
+                {check.exists
+                  ? check.existingProjects > 0
+                    ? `（已存在，里面已有 ${check.existingProjects} 个项目）`
+                    : "（已存在，是空的）"
+                  : "（将新建）"}
+              </div>
+              <label style={{ display: "block", marginTop: 6 }}>
+                <input type="checkbox" checked={migrate} onChange={(e) => setMigrate(e.target.checked)} />
+                {" "}把已有项目一起搬过去
+                <span className="dim">（不勾则只影响以后新建的项目，旧项目留在原处）</span>
+              </label>
+              <div className="form-actions" style={{ marginTop: 6 }}>
+                <AsyncButton onClick={doApply} pendingText="更改中…">确认更改</AsyncButton>
+              </div>
+              <p className="dim" style={{ marginTop: 6 }}>
+                有任务在排队或在跑时不能改——写到一半的项目会分裂在两个位置。
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {result?.ok && (
+        <div style={{ marginTop: 10 }}>
+          <div><b>已改到</b> <code>{result.projectsDir}</code></div>
+          {result.migration ? (
+            <div>
+              搬走 {result.migration.moved.length} 个
+              {result.migration.skipped.length > 0 && <>，跳过 {result.migration.skipped.length} 个（新位置已有同名，未覆盖）</>}
+              {result.migration.failed.length > 0 && (
+                <div className="warn bad" style={{ marginTop: 6 }}>
+                  <b>{result.migration.failed.length} 个没搬成，源文件还在原处</b>
+                  <ul>{result.migration.failed.map((f: any) => <li key={f.id}>{f.id}：{f.reason}</li>)}</ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            // 用户选「不搬」时 MUST 明确告知旧位置还有多少——否则他会以为东西都过来了
+            result.remainingAtOld > 0 && (
+              <div className="warn" style={{ marginTop: 6 }}>
+                旧位置 <code>{result.oldRoot}</code> 还有 <b>{result.remainingAtOld}</b> 个项目——
+                它们仍然可用，但不在新位置里。
+              </div>
+            )
+          )}
+        </div>
+      )}
+      {err && <div className="warn bad" style={{ marginTop: 8 }}>{err}</div>}
+    </div>
   );
 }
 

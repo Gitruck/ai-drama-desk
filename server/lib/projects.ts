@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { PROJECTS_DIR } from "./config.ts";
+import { projectsRoot } from "./config.ts";
 import { parseStoryboard, validateDoc } from "./parse.ts";
 import type { Project, Shot, ShotChoices, StoryboardDoc } from "./types.ts";
 
@@ -11,8 +11,13 @@ export class ProjectError extends Error {
   }
 }
 
+/**
+ * 项目目录。**这是生产代码里唯一拼 projects 路径的地方**——
+ * 别处要项目目录一律调它，MUST NOT 自己 `join(DEFAULT_PROJECTS_DIR, id)`
+ * （那会绕过用户设置、把产物写回默认的系统盘位置）。
+ */
 export function projectDir(id: string) {
-  return join(PROJECTS_DIR, id);
+  return join(projectsRoot(), id);
 }
 
 function projectJson(id: string) {
@@ -20,9 +25,10 @@ function projectJson(id: string) {
 }
 
 export function listProjects(): Project[] {
-  if (!existsSync(PROJECTS_DIR)) return [];
+  const root = projectsRoot();
+  if (!existsSync(root)) return [];
   const out: Project[] = [];
-  for (const d of readdirSync(PROJECTS_DIR, { withFileTypes: true })) {
+  for (const d of readdirSync(root, { withFileTypes: true })) {
     if (!d.isDirectory() || !existsSync(projectJson(d.name))) continue;
     // 单个坏文件（写入中断/手改失误）不拖垮整个项目列表
     try {
@@ -202,10 +208,16 @@ export function listCharacterRefs(projectId: string, name: string): string[] {
   return readdirSync(d).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort();
 }
 
-/** 项目目录必须真的落在 PROJECTS_DIR 里；id 是路由段，删除前这道闸不能省。 */
+/**
+ * 项目目录必须真的落在**当刻**产物根里；id 是路由段，删除前这道闸不能省。
+ *
+ * ⚠️ 判定基准是 `projectsRoot()` 的**运行时值**，MUST NOT 捕获成模块初始化时的常量——
+ * 根可配之后，捕获常量会让改根之后的删除请求要么全被误拒、要么这道闸形同虚设
+ * （`media-output-management` 的「服务端路径约束」同此，见 add-configurable-workspace-root §2.1）。
+ */
 function containedProjectDir(id: string): string {
   if (!id || id.includes("\0") || isAbsolute(id)) throw new ProjectError("项目 id 非法", 400);
-  const base = resolve(PROJECTS_DIR);
+  const base = resolve(projectsRoot());
   const target = resolve(base, id);
   const rel = relative(base, target);
   if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new ProjectError("项目 id 非法", 400);

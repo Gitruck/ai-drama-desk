@@ -228,6 +228,16 @@ export interface ProviderRefPolicy {
 
 export interface StudioConfig {
   port: number;
+  /**
+   * 产物根目录（add-configurable-workspace-root）。**空 = 沿用 `<dataRoot>/projects`**，
+   * 用户随时可清空退回默认。
+   *
+   * ⚠️ 射程只到 `projects`，**不含整个 `DATA_DIR`**：config.json 自己就住在数据根里，
+   * 要让数据根可配就得另立引导文件（读引导 → 定数据根 → 读配置）。
+   * 而 projects 占了实测体积的 97%（一条片子 351 MB 里 341 MB），
+   * 拿到了收益又没有那个循环。密钥留在用户目录也更稳妥——跟着产物搬到移动硬盘是扩大暴露面。
+   */
+  projectsRoot?: string;
   comfyUrl: string;
   /** 用户是否明确启用了本地推理。关闭时健康检查完全不访问 ComfyUI。 */
   localInferenceEnabled: boolean;
