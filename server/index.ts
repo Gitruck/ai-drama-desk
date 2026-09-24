@@ -743,12 +743,14 @@ export function createRequestHandler() {
       if (path.startsWith("/files/")) {
         let rel: string;
         try {
-          rel = decodeURIComponent(path.slice("/files/".length));
+          rel = decodeURIComponent(path.slice("/files/".length)).replace(/\\/g, "/");
         } catch {
           return err("路径编码非法", 400);
         }
         if (!allowedMediaPath(rel)) return err("只允许读取项目媒体和画风参考图", 403, "PATH_FORBIDDEN");
-        const target = containedPath(DATA_DIR, rel);
+        const target = rel.startsWith("projects/")
+          ? containedPath(projectsRoot(), rel.slice("projects/".length))
+          : containedPath(DATA_DIR, rel);
         if (!target) return err("路径非法", 403, "PATH_FORBIDDEN");
         return serveFile(target);
       }
