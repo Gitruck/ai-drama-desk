@@ -1,16 +1,33 @@
-<p align="center">
-  <img src="brand/ai-animation-desk-logo.svg" width="112" alt="Gitruck AI 动画制片工作台 Logo">
+<div align="center">
+
+<img src="brand/ai-animation-desk-logo.svg" width="128" alt="Gitruck AI 动画制片工作台 Logo">
+
+# AI Drama Desk
+
+<p><strong>把一份分镜稿，变成可以挑选、导出、回轨的 AI 视频片段。</strong></p>
+<p>Storyboard → Keyframe → I2V → Return package</p>
+
+<p>
+<a href="https://hocassian.feishu.cn/wiki/FRAKwUvBWib2vrkqZ5XcLDRqnOe">教程</a> ·
+<a href="README.en.md">English</a> ·
+<a href="https://api.ai-mcn.tv:9000/broadcast/exe/gitruck-ai-drama-desk-windows-x64.zip">Windows 下载</a> ·
+<a href="https://github.com/Gitruck/ai-drama-desk">源码</a> ·
+<a href="https://github.com/Gitruck/cli">gtrk CLI</a>
 </p>
 
-# ai-drama-desk · AI 动画制片工作台
+<p>
+<img src="https://img.shields.io/badge/Windows-x64-2563eb?style=flat-square" alt="Windows x64">
+<img src="https://img.shields.io/badge/Engine-cloud%20%7C%20ComfyUI%20%7C%20mock-111827?style=flat-square" alt="Cloud, ComfyUI and mock engines">
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-f43b48?style=flat-square" alt="MIT License"></a>
+</p>
 
-> 把「分镜稿 md」低成本变成可回轨的视频片段 —— **默认全云端、需要时再安装本地引擎：keyframe（参考图/LoRA 锁角色与画风）→ I2V 抽卡 → 导出 return-v1 命名的片段包，可拖回任意 NLE**。
->
-> 主安装包不含 Python、PyTorch、CUDA、ComfyUI 或模型权重；本地 GPU 是可选组件，首次点“下载本地推理组件”时才安装。数据即文件，删目录即删数据。
+</div>
+
+> **一句话定位**：默认云端、按需本地，把 `分镜稿 md → Shot IR → keyframe → I2V → return-v1` 串成一条可检查的制片链。主安装包不含 Python、PyTorch、CUDA、ComfyUI 或模型权重；没有 GPU 也可以先用 mock 或云端跑通流程。
 
 **🔗 配套教程：[AI 动画制片工作台｜上手、云端与本地部署](https://hocassian.feishu.cn/wiki/FRAKwUvBWib2vrkqZ5XcLDRqnOe)**（完整制片流程 · Agent 中使用 skills · 本地模型与 LoRA 部署 · 与 gtrk 工作流衔接）
 
-**⬇️ Windows x64 下载：[gitruck-ai-drama-desk-windows-x64.zip](https://api.ai-mcn.tv:9000/broadcast/exe/gitruck-ai-drama-desk-windows-x64.zip)**（当前云端优先便携包；解压后即可启动，本地推理组件按需安装）
+**⬇️ Windows x64 下载：[gitruck-ai-drama-desk-windows-x64.zip](https://api.ai-mcn.tv:9000/broadcast/exe/gitruck-ai-drama-desk-windows-x64.zip)**（云端优先便携包；解压后即可启动，本地推理组件按需安装）
 
 ```
 分镜稿 md ──解析──▶ Shot IR ──每镜──▶ keyframe（参考图锁角色/画风）──▶ I2V 出片（540p 抽卡）
@@ -68,16 +85,16 @@
 
 产物位于 `dist/windows/`。构建脚本会从 `brand/ai-animation-desk-logo.svg` 生成 Windows 启动器图标；解压后双击 `Gitruck AI Drama Desk.exe` 即可。主包内有工作台运行时与 FFmpeg，但明确不包含 Python、PyTorch、CUDA、ComfyUI 和任何模型权重。当前实测云端主包压缩后约 **134.9 MB**、解压后约 **335 MB**，其中大头是 Bun 与 FFmpeg。
 
-验收完成后，执行下面这条命令即可重新打包，并把校验通过的最新压缩包发布到官网稳定下载文件：
+验收完成后，可用下面的命令构建 Windows 便携包：
 
 ```powershell
 bun run release:windows
 ```
 
-默认发布到 `T:\web\broadcast\exe\gitruck-ai-drama-desk-windows-x64.zip`。发布时会先复制到同目录临时文件并核对 SHA-256，确认一致后才替换稳定下载包；普通的 `bun run package:windows` 或直接运行打包脚本不会覆盖它。若需改发布位置，可使用 `-PublishPath`：
+普通构建输出到 `dist/windows/`。发布到下载站所需的目标路径、凭据与校验流程属于部署环境配置，请按仓库维护者的发布流水线执行，不要把本机路径或密钥写入 README。
 
 ```powershell
-.\scripts\package-windows.ps1 -Publish -PublishPath 'D:\release\gitruck-ai-drama-desk-windows-x64.zip'
+.\scripts\package-windows.ps1 -OutputDir .\dist\windows-final -Version 0.2.0-beta.1
 ```
 
 源码开发方式如下：
@@ -146,7 +163,7 @@ bun run release:windows
 
 普通用户不需要执行 Python 命令：进入“设置与诊断” → “本地推理组件” → “下载本地推理组件”。安装器会读取 GitHub Release 上的版本清单、续传 ZIP、校验 SHA-256，在临时目录解压并精简，完整成功后才切换为当前版本。用户模型默认单独存放在 `%LOCALAPPDATA%\Gitruck\AI Drama Desk\local-engine\models`；也可以在同一卡片中改成其他本机绝对路径（例如 `F:\AI-Models\ComfyUI`）。修改位置不会自动搬动旧模型，更新或重装引擎也不会覆盖模型。
 
-如果你已经自行启动了 ComfyUI，不必再下载托管组件：在“设置与诊断”下方点击“检测现有 ComfyUI”，确认 `http://127.0.0.1:8188` 就绪后点击“使用此 ComfyUI”。上方的“刷新托管组件”只检查工作台自己安装的组件，不负责探测外部 ComfyUI。此时“托管组件的模型目录”也不会改动外部 ComfyUI；外部模型仍由它自己的 `models/` 或 `extra_model_paths.yaml` 管理。若要让托管组件复用现有安装的模型，应填写模型文件夹本身，例如 `F:\file\wip\ComfyUI\models`，而不是 ComfyUI 根目录。
+如果你已经自行启动了 ComfyUI，不必再下载托管组件：在“设置与诊断”下方点击“检测现有 ComfyUI”，确认 `http://127.0.0.1:8188` 就绪后点击“使用此 ComfyUI”。上方的“刷新托管组件”只检查工作台自己安装的组件，不负责探测外部 ComfyUI。此时“托管组件的模型目录”也不会改动外部 ComfyUI；外部模型仍由它自己的 `models/` 或 `extra_model_paths.yaml` 管理。若要让托管组件复用现有安装的模型，应填写模型文件夹本身，例如 `<ComfyUI-dir>/models`，而不是 ComfyUI 根目录。
 
 本地组件删除以下与工作台后端无关或重复的内容：
 
@@ -488,3 +505,13 @@ bun run cli -- skills install --copy               # 不用链接，各宿主复
 - **模型权重**：本仓不分发任何模型权重；请自行从原始发布方下载并核对各自许可（社区蒸馏 / 加速版尤其）。HunyuanVideo 1.5 权重受腾讯社区许可地域约束（如欧盟 / 英国 / 韩国排除），使用前自行确认。
 - **ComfyUI**：GPL-3.0 项目；云端主包不含 ComfyUI，可选本地引擎作为独立组件分发并保留其许可与源码获取方式，工作台只经 HTTP API 集成。
 - **许可**：本仓源码以 MIT 许可发布（见 [LICENSE](LICENSE)）。
+
+## Star History
+
+<a href="https://star-history.com/#Gitruck/ai-drama-desk&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Gitruck/ai-drama-desk&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Gitruck/ai-drama-desk&type=Date" />
+    <img alt="AI Drama Desk Star History" src="https://api.star-history.com/svg?repos=Gitruck/ai-drama-desk&type=Date" />
+  </picture>
+</a>
