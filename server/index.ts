@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { DATA_DIR, DEFAULT_PROJECTS_DIR, ROOT, ensureDirs, loadConfig, mergeConfigPatch, projectsRoot, projectsRootIsDefault, publicConfig, saveConfig } from "./lib/config.ts";
 import { parseStoryboard, validateDoc } from "./lib/parse.ts";
+import { importKeyframe, recordKeyframeReview, keyframeReview } from "./lib/keyframe-import.ts";
 import {
   characterDir,
   createProject,
@@ -643,6 +644,18 @@ export function createRequestHandler() {
         return json(projectView(p.id));
       }
 
+      m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/shots\/(\d+)\/keyframe\/(import|review)$/);
+      if (m) {
+        const index = Number(m[2]);
+        if (m[3] === "import" && req.method === "POST") {
+          const files = await readMultipartFiles(req);
+          if (files.length !== 1) throw new ProjectError("每次导入恰好一张关键帧");
+          return json(await importKeyframe(m[1], index, files[0].data, files[0].name));
+        }
+        if (m[3] === "review" && req.method === "POST") return json(recordKeyframeReview(m[1], index, await req.json()));
+        if (m[3] === "review" && req.method === "GET") return json(keyframeReview(m[1], index, new URL(req.url).searchParams.get("file") ?? ""));
+      }
+
       m = path.match(/^\/api\/projects\/([a-z0-9-]+)\/shots\/(\d+)\/(keyframe|video)$/);
       if (m && req.method === "POST") {
         const body = (await req.json().catch(() => ({}))) as { provider?: string };
@@ -671,6 +684,10 @@ export function createRequestHandler() {
         const body = (await req.json()) as { kind: "keyframe" | "video"; file: string };
         const p = getProject(m[1]);
         if (!p) return err("项目不存在", 404);
+        const shotIndex = parseInt(m[2], 10);
+        if (!p.doc.shots.some(s => s.index === shotIndex)) return err("分镜不存在", 404);
+        if (body.kind !== "keyframe" && body.kind !== "video") return err("kind须为keyframe或video");
+        if (!listShotOutputs(p.id, body.kind === "keyframe" ? "keyframes" : "videos", shotIndex).includes(body.file)) return err("候选文件不存在", 404);
         setChoice(p, parseInt(m[2], 10), body.kind, body.file);
         return json(projectView(p.id));
       }

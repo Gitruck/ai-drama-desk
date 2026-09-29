@@ -4,6 +4,7 @@
 import { basename, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { characterDir, getProject, getChoices, listCharacterRefs, listShotOutputs, saveProject, setChoice, shotDir, shotKey } from "./projects.ts";
+import { assertImportedKeyframeReviewed } from "./keyframe-import.ts";
 import { getStyle, StyleError } from "./styles.ts";
 import { refSetsOf, setCharacterGenerationReference } from "./character-refs.ts";
 import { assembleCharRefAnchors, assembleRefs, buildCharRefNegatives, buildCharRefPrompt, buildKeyframeNegatives, buildKeyframePrompt, buildVideoPrompts, h3Frames, wanFrames } from "./prompt.ts";
@@ -234,6 +235,10 @@ function pendingJob(projectId: string, shotIndex: number, kind: JobKind): GenJob
 }
 
 export function enqueue(projectId: string, shotIndex: number, kind: JobKind, provider: string, chainVideoProvider?: string): GenJob {
+  if (kind === "video") {
+    const p = getProject(projectId);
+    if (p) assertImportedKeyframeReviewed(projectId, shotIndex, getChoices(p, shotIndex).keyframe ?? listShotOutputs(projectId, "keyframes", shotIndex)[0]);
+  }
   const pending = pendingJob(projectId, shotIndex, kind);
   if (pending) {
     // 快速连点/传输重试只返回原任务，不再重复烧云端费用或显卡时间。
@@ -556,6 +561,7 @@ async function runJob(job: GenJob, signal: AbortSignal) {
       const durationSec = shot.durationSec ?? cfg.defaultShotSec;
       const chosen = getChoices(p, shot.index).keyframe ?? listShotOutputs(p.id, "keyframes", shot.index)[0];
       const kfPath = chosen ? join(shotDir(p.id, "keyframes", shot.index), chosen) : undefined;
+      assertImportedKeyframeReviewed(p.id, shot.index, chosen);
       const { pos, neg } = buildVideoPrompts(p, shot, style);
 
       if (job.provider === "mock-video") {

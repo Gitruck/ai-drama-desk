@@ -7,9 +7,11 @@ description: AI 动画制片工作台（ai-drama-desk）的驱动 skill——把
 
 ## 一句话定位
 
-上游是一份「分镜稿 md」（谁产的都行：手写、任何 LLM、或 gtrk 生态的 `/gtrk-ai-drama`）；本 skill 驱动本地工作台把它变成可回轨的视频片段包。出片在本地开源模型（ComfyUI）或云端出口，导出后用户手动拖回自己的 NLE。
+上游是一份「分镜稿 md」（谁产的都行：手写、任何 LLM、或 gtrk 生态的 `/gtrk-ai-drama`）；本 skill 驱动本地工作台把它变成可回轨的视频片段包。出片在本地开源模型（ComfyUI）或云端出口，导出后用 gtrk ai-drama lay 回轨；其他 NLE 可手动导入。
 
 ## 前置
+
+- 外部宿主生图（如用户指定 Image2）按 [外部关键帧导入与审阅](references/external-keyframes.md) 操作；不要改走默认生图模型，不要上传到角色 refs 后误称关键帧已入库。
 
 - **已有项目最小交接契约**：工作台 API 地址 + 项目 ID。默认 API Base 为 `http://127.0.0.1:7799/api/v1`，可被 `GITRUCK_AI_DRAMA_DESK_URL` 覆盖；项目 ID 让用户从项目页标题下方的「项目 ID · 复制」取得。
 - 接管已有项目前先 `GET <base>/health`，再 `GET <base>/projects/<project-id>`。两者成功就直接走 HTTP API，**不需要知道仓库路径，也不许为此扫描磁盘找仓库**。
@@ -69,13 +71,13 @@ description: AI 动画制片工作台（ai-drama-desk）的驱动 skill——把
 1. **接管或投稿**：已有项目先用 `/health` + `/projects/<id>` 校验；新项目才 `POST /projects` body `{storyboardMd, styleId, slug, name}`。styleId 用用户画风库里的档案（`GET /styles` 先看有什么；没有就引导导入风格包或自建）。返回的 warnings 逐条转告用户（缺秒数/缺角色等）。
 2. **备角色参考图（人设锚点）**（检查点）：角色一致性靠参考图 > 文字。三条路任选——① 用户已有设定图 → 工作台角色卡「上传」；② **工作台内生成（推荐，断档已补齐）**：调用 `/generate-ref`，`turnaround` 出三视图设定表、`single` 出单人立绘，产物直接落该角色源图库，即刻可挑可裁；缺画风/锚图/LoRA 也能出（A 档现成开源模型零前置兜底）；③ 外部工具（ChatGPT 等）出图后经 refs API 上传。本地 A/B 档挑一张在裁剪画布裁出单人主参考（三视图整图直喂给镜头有复制人物风险，故先裁）。出人设仍是检查点：挑图交用户。
 3. **出图批次**：`POST /api/v1/projects/<id>/shots/<n>/keyframe` 或全自动 `POST /api/v1/projects/<id>/auto`。轮询 `GET /api/v1/jobs?project=<id>` 到全 done，失败逐条报错因。
-4. **用户挑图**（检查点）：抽卡与选用在工作台点击完成，别替用户拍审美。
-5. **出片批次**：同 auto/逐镜。默认本地 ComfyUI；用户嫌某镜动作塌 → 换 `fal-video` 或 `pixmind-video` 重 roll 该镜（后者带原生音轨、无本地依赖）。
+4. **逐镜审阅与选用**：先按原句、人物阶段、实际参考核查画面，记录具体结论。用户明确要求看样片/逐步确认时交给用户；已授权按确定风格执行时由 Agent 完成逐镜审阅，不重复请示。选中不代表审阅通过。
+5. **出片批次**：使用本次用户指定 provider；没有指定时再按配置选择。需要逐镜审阅的外部关键帧不用 auto 绕过审阅。动作失败先查提示词与参考，改变模型或计费出口不得超出已授权范围。
    H3 分两档：`h3-video` 抽卡档（4 步）多抽几条看动作，这镜定了再用 `h3-video-final` 成片档（12 步）出一两条。
    **别对用户说成片档「更好」**——两档是独立出口、切档不承诺同 seed 复现同一条，只是投入更多算力，挑哪条是用户的事。
    成本如实说：5 秒片抽卡约 36 秒、成片约 78 秒，但 15 秒长镜成片要约 5 分钟（超线性，别按 2 倍外推）。
 6. **导出**：`POST /api/v1/projects/<id>/export` → 读 manifest 转告：实测 vs 建议时长差值、未导出的镜（skipped）、累计成本（totalCost）。
-7. **交棒收口**：告知用户产物位置（项目目录 `exports/aidrama/`，`<slug>-<beatId>-s<n>.mp4`），由用户把满意的片段拖回自己的 NLE 按 beat 区间对齐。本 skill 在此停（回轨是手工环节）。
+7. **回轨收口**：导出 return-v1 包后，用 `gtrk ai-drama lay --project <工程> --desk-project <id>`；后续新增 beat 加 `--append` 保留已有手调。同规格换片用 swap。其他 NLE 才交付标准片段包供导入。稀疏关键场景保持空档，不自动 seal。
 
 ## 安全与操作铁律
 
